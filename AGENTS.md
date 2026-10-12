@@ -54,8 +54,8 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 
 - Start / stop: WS `StartCharge` / `StopCharge`.
 - Charge mode: WS `ChangeConfiguration`, attributeName `ChargeMode`
-  (`Authorized-Charge` = via app/card, `CycleReservation-Charge` = scheduled;
-  plug-and-charge value **unconfirmed** — `MODE_PLUG_AND_CHARGE` in `const.py`).
+  (`Authorized-Charge` = via app/card, `Plug-and-Charge` = plug in and charge,
+  `CycleReservation-Charge` = scheduled; all confirmed live).
 - Amperage: WS `ChangeConfiguration`, attributeName `MaxChargeCurrent`.
   **The charger only accepts a current change while not actively charging.** So
   `ZeedaCoordinator.set_max_current` orchestrates stop → change → start when a
@@ -84,8 +84,6 @@ ruff check custom_components/
 
 ## Open items / TODO
 
-- Confirm the plug-and-charge `ChargeMode` value against the live API (set it in
-  the app, then read `chargePointSetting.chargeMode`).
 - Confirm `StartCharge`/`StopCharge`/`ChangeConfiguration` against the physical charger.
 - Consider mapping `connectorStatus` finer and exposing reservation times.
 - Add a pytest suite (encrypt vector, payload parsing, config flow) and the CI job.

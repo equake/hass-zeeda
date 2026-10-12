@@ -81,9 +81,9 @@ Outbound frame:
 - **ChangeConfiguration** — `payload:{setVariableData:[{attributeValue,variable:{name}}]}`
   - `name="MaxChargeCurrent"`, value `"8"|"16"|"32"` — **only while not charging**
   - `name="ChargeMode"`, value:
-    - `Authorized-Charge` — start/stop via app or RFID card ✓ confirmed
-    - `CycleReservation-Charge` — scheduled ✓ confirmed
-    - plug-and-charge — value **TODO: confirm live**
+    - `Authorized-Charge` — start/stop via app or RFID card ✓ confirmed live
+    - `Plug-and-Charge` — plug in and charge automatically ✓ confirmed live
+    - `CycleReservation-Charge` — scheduled ✓ confirmed live
 
 ### Inbound push frames
 

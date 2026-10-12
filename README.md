@@ -104,8 +104,6 @@ the official ZEEDA app. GWM Brazil has a clear Portuguese walkthrough:
 
 - Unofficial. Not affiliated with Zeeda, Zhida, GWM or BYD. The cloud API is
   undocumented and may change at any time.
-- The *plug-and-charge* mode value is not yet confirmed against the live API; the
-  other two modes are confirmed.
 - One Home Assistant config entry = one Zeeda account; every charger on the
   account is added as its own device.
 
