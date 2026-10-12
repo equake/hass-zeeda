@@ -83,6 +83,16 @@ pip install pycryptodome        # or: pip install cryptography
 python3 helpers/test_client.py --email you@example.com --password 'yourpass' -v
 ```
 
+## Running the test suite
+
+The automated tests use synthetic-only encryption inputs and do not require a
+Zeeda account:
+
+```bash
+pip install -r requirements_test.txt
+python -m pytest -q
+```
+
 ## Brand icon
 
 The integration ships its icon under `custom_components/zeeda/brand/`
