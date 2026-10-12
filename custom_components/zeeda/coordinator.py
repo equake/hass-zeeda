@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -24,7 +25,7 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -199,7 +200,8 @@ class ZeedaCoordinator:
             seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
 
-        self._language = "en"
+        # Server-side messages follow Home Assistant's language, like the app's.
+        self._language = hass.config.language or "en"
         self._api = ZeedaApi(
             async_get_clientsession(hass),
             self._language,
@@ -208,16 +210,16 @@ class ZeedaCoordinator:
         self._session: Session | None = None
         self._token_expires_at: float | None = None
         self._ws: dict[str, ZeedaWebSocket] = {}
-        self._listeners: set = set()
-        self._unsub_poll = None
+        self._listeners: set[Callable[[], None]] = set()
+        self._unsub_poll: CALLBACK_TYPE | None = None
         self._command_lock = asyncio.Lock()
-        self._unsub_confirm: dict[str, Any] = {}
-        self._unsub_pending: dict[str, Any] = {}
+        self._unsub_confirm: dict[str, CALLBACK_TYPE] = {}
+        self._unsub_pending: dict[str, CALLBACK_TYPE] = {}
         self._available: dict[str, bool] = {}
         self._offline_since: dict[str, float] = {}
         self._offline_issues: set[str] = set()
         self._last_full: float = 0.0
-        self._ws_debounce: asyncio.TimerHandle | None = None
+        self._ws_debounce: CALLBACK_TYPE | None = None
         self._auth_failures: int = 0
         self._auth_cooldown_until: float = 0.0
         self._reauth_warned: bool = False
@@ -245,7 +247,7 @@ class ZeedaCoordinator:
             self._unsub_poll()
             self._unsub_poll = None
         if self._ws_debounce:
-            self._ws_debounce.cancel()
+            self._ws_debounce()
             self._ws_debounce = None
         for unsub in (*self._unsub_confirm.values(), *self._unsub_pending.values()):
             unsub()
@@ -471,7 +473,9 @@ class ZeedaCoordinator:
 
     # -- listeners ------------------------------------------------------------
     @callback
-    def async_add_listener(self, update_callback):
+    def async_add_listener(
+        self, update_callback: Callable[[], None]
+    ) -> Callable[[], None]:
         self._listeners.add(update_callback)
 
         def _remove() -> None:
@@ -608,11 +612,14 @@ class ZeedaCoordinator:
                 return
         # Ack (StartCharge/StopCharge) or unknown frame -> re-read status via REST.
         if self._ws_debounce:
-            self._ws_debounce.cancel()
-        self._ws_debounce = self.hass.loop.call_later(
-            WS_DEBOUNCE,
-            lambda: self.hass.async_create_task(self.async_refresh()),
-        )
+            self._ws_debounce()
+            self._ws_debounce = None
+
+        async def _refresh(_now) -> None:
+            self._ws_debounce = None
+            await self.async_refresh()
+
+        self._ws_debounce = async_call_later(self.hass, WS_DEBOUNCE, _refresh)
 
     @callback
     def _apply_payload(self, charger: Charger, action: str | None, payload: dict) -> bool:
