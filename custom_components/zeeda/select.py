@@ -38,7 +38,7 @@ class ZeedaChargeModeSelect(ZeedaEntity, SelectEntity):
 
     @property
     def available(self) -> bool:
-        return self._coordinator.connected and self._charger.online
+        return self._charger.reachable and self._charger.online
 
     @property
     def current_option(self) -> str | None:

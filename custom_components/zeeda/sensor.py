@@ -145,7 +145,7 @@ class ZeedaSensor(ZeedaEntity, SensorEntity):
     def available(self) -> bool:
         # status/firmware should still read when the charger is offline.
         if self.entity_description.key in ("status", "firmware", "wifi"):
-            return self._coordinator.connected
+            return self._charger.reachable
         return super().available
 
     @property

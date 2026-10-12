@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
@@ -62,6 +63,7 @@ class Charger:
     connector_id: int = 1
     model: str | None = None
     firmware: str | None = None
+    reachable: bool = False
     online: bool = False
     status: int | None = None
     error_code: int | None = None
@@ -244,7 +246,13 @@ class ZeedaCoordinator:
                     any_ok = True
                 except ZeedaAuthError:
                     raise  # token problem is account-wide -> handled below
-                except ZeedaError as err:
+                except (
+                    ZeedaError,
+                    aiohttp.ClientError,
+                    TimeoutError,
+                    ValueError,
+                ) as err:
+                    any_ok = any_ok or charger.reachable
                     _LOGGER.debug("Zeeda refresh failed for %s: %s", code, err)
             self.connected = any_ok
             if any_ok and full:
@@ -252,12 +260,19 @@ class ZeedaCoordinator:
         except ZeedaAuthError:
             # token expired or revoked -> re-login once, then retry next tick
             self.connected = False
+            for charger in self.chargers.values():
+                charger.reachable = False
             await self._login()
         self._notify()
 
     async def _refresh_one(self, code: str, charger: Charger, *, full: bool) -> None:
         # Live meter/status — the data that actually changes. Always fetched.
-        status = await self._api.get_status_info(code, charger.connector_id)
+        try:
+            status = await self._api.get_status_info(code, charger.connector_id)
+        except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
+            charger.reachable = False
+            raise
+        charger.reachable = True
         charger.raw["status"] = status
         charger.status = status.get("connectorStatus")
         charger.error_code = status.get("errorCode")
@@ -341,9 +356,11 @@ class ZeedaCoordinator:
         charger = self.chargers.get(code)
         action = data.get("action")
         payload = data.get("payload")
+        if charger is not None:
+            charger.reachable = True
         if charger is not None and isinstance(payload, dict):
             if self._apply_payload(charger, action, payload):
-                self.connected = True
+                self.connected = any(c.reachable for c in self.chargers.values())
                 self._notify()
                 return
         # Ack (StartCharge/StopCharge) or unknown frame -> re-read status via REST.

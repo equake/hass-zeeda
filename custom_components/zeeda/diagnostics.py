@@ -21,6 +21,7 @@ async def async_get_config_entry_diagnostics(
     chargers = {
         code: {
             "name": c.name,
+            "reachable": c.reachable,
             "status": c.status,
             "online": c.online,
             "charge_mode": c.charge_mode,

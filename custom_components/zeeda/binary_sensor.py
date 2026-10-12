@@ -77,7 +77,7 @@ class ZeedaBinarySensor(ZeedaEntity, BinarySensorEntity):
     @property
     def available(self) -> bool:
         if self.entity_description.always_available:
-            return self._coordinator.connected
+            return self._charger.reachable
         return super().available
 
     @property

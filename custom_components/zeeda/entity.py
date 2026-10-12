@@ -35,7 +35,7 @@ class ZeedaEntity(Entity):
 
     @property
     def available(self) -> bool:
-        return self._coordinator.connected and self._charger.online
+        return self._charger.reachable and self._charger.online
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
