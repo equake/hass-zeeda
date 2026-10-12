@@ -33,13 +33,13 @@ from .api import (
     ZeedaError,
 )
 from .const import (
+    AUTH_BACKOFF_BASE,
+    AUTH_BACKOFF_MAX,
     CONF_SCAN_INTERVAL,
     CONF_TIMEZONE,
     CURRENT_CHANGE_PAUSE,
     DEFAULT_CURRENT_OPTIONS,
     DEFAULT_SCAN_INTERVAL,
-    AUTH_BACKOFF_BASE,
-    AUTH_BACKOFF_MAX,
     DOMAIN,
     FULL_REFRESH_INTERVAL,
     STATUS_CHARGING,
@@ -177,8 +177,8 @@ class ZeedaCoordinator:
             raise ZeedaConnectionError("login is backing off after a failed attempt")
         try:
             await self._login()
-        except (ConfigEntryAuthFailed, ZeedaError):
-            self._auth_failures += 1
+        except ConfigEntryAuthFailed:
+            self._auth_failures = min(self._auth_failures + 1, 5)
             self._auth_cooldown_until = time.monotonic() + min(
                 AUTH_BACKOFF_BASE * 2 ** (self._auth_failures - 1), AUTH_BACKOFF_MAX
             )
