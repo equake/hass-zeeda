@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 
 from .api import ZeedaError
 from .const import CONFIG_ENTRY_VERSION, DOMAIN
@@ -66,3 +67,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ZeedaConfigEntry) -> b
         return True
     _LOGGER.error("Cannot migrate Zeeda config entry from version %s", entry.version)
     return False
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ZeedaConfigEntry, device_entry: dr.DeviceEntry
+) -> bool:
+    """Allow deleting a charger device that is no longer on the account."""
+    coordinator: ZeedaCoordinator = entry.runtime_data
+    codes = {
+        identifier[1]
+        for identifier in device_entry.identifiers
+        if identifier[0] == DOMAIN
+    }
+    return not codes & coordinator.chargers.keys()

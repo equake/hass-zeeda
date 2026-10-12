@@ -76,7 +76,8 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 - Amperage: WS `ChangeConfiguration`, attributeName `MaxChargeCurrent`.
   **The charger only accepts a current change while not actively charging.** So
   `ZeedaCoordinator.set_max_current` orchestrates stop → wait until the charger
-  reports it stopped (push or REST, `STOP_CONFIRM_TIMEOUT`) → change → start,
+  reports it stopped (the pushed status, with a slow REST fallback,
+  `STOP_CONFIRM_REST_POLL`/`STOP_CONFIRM_TIMEOUT`) → change → start,
   **only if the session was on** (`ACTIVE_STATUSES` = charging/waiting, the same
   rule as the Charging switch). It restarts even if the change is rejected, and
   aborts (restarting) if the charger never reports stopped. If the session was

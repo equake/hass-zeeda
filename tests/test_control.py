@@ -30,7 +30,8 @@ def fast_timers(monkeypatch: pytest.MonkeyPatch) -> list:
         return Mock()
 
     monkeypatch.setattr(coordinator_module.asyncio, "sleep", _sleep)
-    monkeypatch.setattr(coordinator_module, "STOP_CONFIRM_POLL", 0)
+    monkeypatch.setattr(coordinator_module, "SETTING_CONFIRM_POLL", 0)
+    monkeypatch.setattr(coordinator_module, "STOP_CONFIRM_REST_POLL", 0)
     monkeypatch.setattr(coordinator_module, "SETTING_CONFIRM_TIMEOUT", 0.05)
     monkeypatch.setattr(coordinator_module, "async_call_later", _call_later)
     return timers
@@ -208,6 +209,29 @@ async def test_set_current_aborts_if_charger_never_stops(
     ws.set_max_current.assert_not_awaited()
     ws.start_charge.assert_awaited_once()
     assert charger.effective_max_current == 32
+
+
+async def test_stop_wait_finishes_on_a_pushed_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pushed status confirms the stop; no REST poll is needed."""
+    monkeypatch.setattr(coordinator_module, "STOP_CONFIRM_REST_POLL", 3600)
+    monkeypatch.setattr(coordinator_module, "STOP_CONFIRM_TIMEOUT", 2)
+    coordinator, charger, _ws = _coordinator(status=2)
+    refresh = AsyncMock()
+    coordinator._refresh_one = refresh
+
+    async def _push() -> None:
+        await _real_sleep(0)
+        charger.status = 1  # StatusNotification arrives over the socket
+
+    push = asyncio.ensure_future(_push())
+    try:
+        assert await coordinator._wait_until_stopped(charger.code, charger) is True
+    finally:
+        await push
+
+    refresh.assert_not_awaited()
 
 
 # -- charge mode --------------------------------------------------------------

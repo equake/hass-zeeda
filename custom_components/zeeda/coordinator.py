@@ -54,10 +54,12 @@ from .const import (
     EVENT_COMMAND_UNCONFIRMED,
     FULL_REFRESH_INTERVAL,
     ISSUE_CHARGER_OFFLINE,
+    ISSUE_NO_CHARGERS,
     OFFLINE_ISSUE_DELAY,
     PENDING_STATE_TIMEOUT,
+    SETTING_CONFIRM_POLL,
     SETTING_CONFIRM_TIMEOUT,
-    STOP_CONFIRM_POLL,
+    STOP_CONFIRM_REST_POLL,
     STOP_CONFIRM_TIMEOUT,
     TOKEN_REFRESH_MARGIN,
     WS_ACTION_OFFLINE,
@@ -95,6 +97,21 @@ def _snap_current(options: tuple[str, ...], amps: int) -> int:
     if not values:
         return amps
     return min(values, key=lambda value: abs(value - amps))
+
+
+def _to_int(value: object) -> int | None:
+    """Coerce an int-ish value from the cloud to int.
+
+    The API is not type-stable, and a string status would silently break every
+    ``status in {...}`` comparison (a string ``"0"`` error code is also truthy,
+    which would report a phantom fault).
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -217,6 +234,8 @@ class ZeedaCoordinator:
         self._available: dict[str, bool] = {}
         self._offline_since: dict[str, float] = {}
         self._offline_issues: set[str] = set()
+        self._no_chargers_issue = False
+        self._removal_strikes = 0
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
         # Login backoff outlives this coordinator: a failed setup is retried by
@@ -261,6 +280,9 @@ class ZeedaCoordinator:
         for code in self._offline_issues:
             ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_CHARGER_OFFLINE}_{code}")
         self._offline_issues.clear()
+        if self._no_chargers_issue:
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_NO_CHARGERS)
+            self._no_chargers_issue = False
         for ws in self._ws.values():
             await ws.close()
         self._ws.clear()
@@ -355,20 +377,35 @@ class ZeedaCoordinator:
         for ws in websockets:
             await ws.close()
 
-    async def _discover(self) -> None:
+    async def _discover(self) -> bool:
+        """Build the account's chargers at setup; returns True when the set changed.
+
+        Runtime changes go through ``_reconcile_chargers``, which reloads the
+        entry so this rebuilds devices and entities from scratch.
+        """
         assert self._session is not None
         items = await self._api.get_user_charge(
             self._session.user_id, self._session.org_id
         )
+        previous = set(self.chargers)
+        codes: set[str] = set()
         for item in items:
             vo = item.get("chargePointVO") or {}
             code = vo.get("chargePointCode")
             if not code:
                 continue
+            codes.add(code)
+            name = item.get("chargePointName") or code
+            existing = self.chargers.get(code)
+            if existing is not None:
+                existing.name = name
+                existing.model = vo.get("chargePointTypeModel") or existing.model
+                existing.firmware = vo.get("firmwareVersion") or existing.firmware
+                continue
             connectors = vo.get("connectorStatus") or [{}]
             charger = Charger(
                 code=code,
-                name=item.get("chargePointName") or code,
+                name=name,
                 charge_point_id=int(vo.get("id") or item.get("chargePointId") or 0),
                 connector_id=int(connectors[0].get("connectorId", 1)),
                 model=vo.get("chargePointTypeModel"),
@@ -383,8 +420,32 @@ class ZeedaCoordinator:
             except ZeedaError:
                 pass
             self.chargers[code] = charger
-        if not self.chargers:
-            _LOGGER.warning("Zeeda account %s has no chargers", self._account)
+
+        removed = set(self.chargers) - codes
+        for code in removed:
+            del self.chargers[code]
+            self._available.pop(code, None)
+            self._offline_since.pop(code, None)
+        self._set_no_chargers_issue(not self.chargers)
+        return codes != previous
+
+    @callback
+    def _set_no_chargers_issue(self, missing: bool) -> None:
+        if missing == self._no_chargers_issue:
+            return
+        self._no_chargers_issue = missing
+        if missing:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                ISSUE_NO_CHARGERS,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=ISSUE_NO_CHARGERS,
+                translation_placeholders={"account": self._account},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_NO_CHARGERS)
 
     # -- polling --------------------------------------------------------------
     async def _scheduled_refresh(self, _now) -> None:
@@ -410,11 +471,57 @@ class ZeedaCoordinator:
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.debug("WS reconnect failed for %s: %s", code, err)
             full = (time.monotonic() - self._last_full) >= FULL_REFRESH_INTERVAL
+            if full and await self._reconcile_chargers():
+                return
             await self.async_refresh(full=full)
         except ConfigEntryAuthFailed:
             self.connected = False
             self._notify()
             self._start_reauth()
+
+    async def _reconcile_chargers(self) -> bool:
+        """Re-check the account's chargers; reload if the set really changed.
+
+        Does not touch ``self.chargers``: entities of a removed charger still
+        read it until the reload rebuilds everything. A new charger reloads at
+        once; a removal (or an empty list) must be seen on two consecutive full
+        refreshes, so one bad cloud answer cannot drop every entity. Skipped
+        while a command runs, so a reload never cuts a stop -> change -> start.
+        """
+        if self._command_lock.locked():
+            return False
+        assert self._session is not None
+        try:
+            items = await self._api.get_user_charge(
+                self._session.user_id, self._session.org_id
+            )
+        except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("Zeeda charger re-discovery failed: %s", err)
+            return False
+        codes = {
+            code
+            for item in items
+            if (code := (item.get("chargePointVO") or {}).get("chargePointCode"))
+        }
+        added = codes - self.chargers.keys()
+        removed = self.chargers.keys() - codes
+        self._removal_strikes = self._removal_strikes + 1 if removed else 0
+        if not added and (not removed or self._removal_strikes < 2):
+            if removed:
+                _LOGGER.debug(
+                    "Zeeda charger(s) %s missing from the account; confirming",
+                    ", ".join(sorted(removed)),
+                )
+            return False
+        # Chargers were added or removed in the Zeeda app: reload so the device
+        # and entity set matches instead of keeping stale ones (or missing new
+        # ones) until the user reloads by hand.
+        _LOGGER.info(
+            "Zeeda account %s charger list changed; reloading the entry",
+            self._account,
+        )
+        self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+        return True
 
     async def async_refresh(self, *, full: bool = False) -> None:
         any_ok = False
@@ -463,8 +570,8 @@ class ZeedaCoordinator:
             raise
         charger.reachable = True
         charger.raw["status"] = status
-        charger.status = status.get("connectorStatus")
-        charger.error_code = status.get("errorCode")
+        charger.status = _to_int(status.get("connectorStatus"))
+        charger.error_code = _to_int(status.get("errorCode"))
         meter = status.get("currentMeterValue") or {}
         charger.power_kw = _to_float(meter.get("chargingPower"))
         charger.session_energy_kwh = _to_float(meter.get("chargingEnergyValue"))
@@ -494,8 +601,7 @@ class ZeedaCoordinator:
         charger.support_solar = bool(detail.get("supportSolarMode"))
         charger.support_load_balancing = bool(detail.get("supportLoadBalancing"))
         charger.charge_mode = setting.get("chargeMode")
-        max_current = setting.get("maxChargeCurrent")
-        charger.max_current = int(max_current) if max_current else charger.max_current
+        charger.max_current = _to_int(setting.get("maxChargeCurrent")) or charger.max_current
         charger.reconcile(settings=True)
 
     # -- listeners ------------------------------------------------------------
@@ -652,7 +758,7 @@ class ZeedaCoordinator:
         """
         applied = False
         if "connectorStatus" in payload and payload["connectorStatus"] is not None:
-            charger.status = payload["connectorStatus"]
+            charger.status = _to_int(payload["connectorStatus"])
             applied = True
         if "chargingPower" in payload:
             charger.power_kw = _to_float(payload.get("chargingPower"))
@@ -758,7 +864,7 @@ class ZeedaCoordinator:
         """Poll chargePointSetting until ``key`` reports ``expected``."""
         deadline = time.monotonic() + SETTING_CONFIRM_TIMEOUT
         while time.monotonic() < deadline:
-            await asyncio.sleep(STOP_CONFIRM_POLL)
+            await asyncio.sleep(SETTING_CONFIRM_POLL)
             try:
                 setting = await self._api.get_point_setting(code)
             except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
@@ -791,15 +897,20 @@ class ZeedaCoordinator:
                 self._notify()
 
     async def _wait_until_stopped(self, code: str, charger: Charger) -> bool:
-        """Wait until the charger reports the session stopped (push or REST)."""
+        """Wait until the charger reports the session stopped.
+
+        The pushed StatusNotification normally confirms it within seconds, so
+        this checks the in-memory status every second and only falls back to a
+        slow REST poll — a fast one would burst status reads at the cloud.
+        """
         deadline = time.monotonic() + STOP_CONFIRM_TIMEOUT
-        next_poll = time.monotonic() + STOP_CONFIRM_POLL
+        next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             if charger.status not in ACTIVE_STATUSES:
                 return True
             if time.monotonic() >= next_poll:
-                next_poll = time.monotonic() + STOP_CONFIRM_POLL
+                next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
                 try:
                     await self._refresh_one(code, charger, full=False)
                 except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
