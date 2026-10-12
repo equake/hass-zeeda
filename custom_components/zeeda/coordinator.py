@@ -56,8 +56,9 @@ from .const import (
     ISSUE_NO_CHARGERS,
     OFFLINE_ISSUE_DELAY,
     PENDING_STATE_TIMEOUT,
+    SETTING_CONFIRM_POLL,
     SETTING_CONFIRM_TIMEOUT,
-    STOP_CONFIRM_POLL,
+    STOP_CONFIRM_REST_POLL,
     STOP_CONFIRM_TIMEOUT,
     TOKEN_REFRESH_MARGIN,
     WS_ACTION_OFFLINE,
@@ -95,6 +96,21 @@ def _snap_current(options: tuple[str, ...], amps: int) -> int:
     if not values:
         return amps
     return min(values, key=lambda value: abs(value - amps))
+
+
+def _to_int(value: object) -> int | None:
+    """Coerce an int-ish value from the cloud to int.
+
+    The API is not type-stable, and a string status would silently break every
+    ``status in {...}`` comparison (a string ``"0"`` error code is also truthy,
+    which would report a phantom fault).
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -525,8 +541,8 @@ class ZeedaCoordinator:
             raise
         charger.reachable = True
         charger.raw["status"] = status
-        charger.status = status.get("connectorStatus")
-        charger.error_code = status.get("errorCode")
+        charger.status = _to_int(status.get("connectorStatus"))
+        charger.error_code = _to_int(status.get("errorCode"))
         meter = status.get("currentMeterValue") or {}
         charger.power_kw = _to_float(meter.get("chargingPower"))
         charger.session_energy_kwh = _to_float(meter.get("chargingEnergyValue"))
@@ -556,8 +572,7 @@ class ZeedaCoordinator:
         charger.support_solar = bool(detail.get("supportSolarMode"))
         charger.support_load_balancing = bool(detail.get("supportLoadBalancing"))
         charger.charge_mode = setting.get("chargeMode")
-        max_current = setting.get("maxChargeCurrent")
-        charger.max_current = int(max_current) if max_current else charger.max_current
+        charger.max_current = _to_int(setting.get("maxChargeCurrent")) or charger.max_current
         charger.reconcile(settings=True)
 
     # -- listeners ------------------------------------------------------------
@@ -714,7 +729,7 @@ class ZeedaCoordinator:
         """
         applied = False
         if "connectorStatus" in payload and payload["connectorStatus"] is not None:
-            charger.status = payload["connectorStatus"]
+            charger.status = _to_int(payload["connectorStatus"])
             applied = True
         if "chargingPower" in payload:
             charger.power_kw = _to_float(payload.get("chargingPower"))
@@ -820,7 +835,7 @@ class ZeedaCoordinator:
         """Poll chargePointSetting until ``key`` reports ``expected``."""
         deadline = time.monotonic() + SETTING_CONFIRM_TIMEOUT
         while time.monotonic() < deadline:
-            await asyncio.sleep(STOP_CONFIRM_POLL)
+            await asyncio.sleep(SETTING_CONFIRM_POLL)
             try:
                 setting = await self._api.get_point_setting(code)
             except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
@@ -853,15 +868,20 @@ class ZeedaCoordinator:
                 self._notify()
 
     async def _wait_until_stopped(self, code: str, charger: Charger) -> bool:
-        """Wait until the charger reports the session stopped (push or REST)."""
+        """Wait until the charger reports the session stopped.
+
+        The pushed StatusNotification normally confirms it within seconds, so
+        this checks the in-memory status every second and only falls back to a
+        slow REST poll — a fast one would burst status reads at the cloud.
+        """
         deadline = time.monotonic() + STOP_CONFIRM_TIMEOUT
-        next_poll = time.monotonic() + STOP_CONFIRM_POLL
+        next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             if charger.status not in ACTIVE_STATUSES:
                 return True
             if time.monotonic() >= next_poll:
-                next_poll = time.monotonic() + STOP_CONFIRM_POLL
+                next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
                 try:
                     await self._refresh_one(code, charger, full=False)
                 except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
