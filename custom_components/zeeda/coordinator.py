@@ -41,6 +41,16 @@ from .ws import ZeedaWebSocket
 _LOGGER = logging.getLogger(__name__)
 
 
+def _to_float(value: object) -> float | None:
+    """Coerce a number or numeric string (push `chargingPower`) to float."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Charger:
     """Latest known state for one charge point."""
@@ -130,6 +140,11 @@ class ZeedaCoordinator:
             )
         except ZeedaAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
+        # The new token invalidates existing sockets (they were built with the old
+        # one). Drop them so the next refresh/command reconnects with the fresh token.
+        for ws in self._ws.values():
+            await ws.close()
+        self._ws.clear()
 
     async def _discover(self) -> None:
         assert self._session is not None
@@ -176,19 +191,25 @@ class ZeedaCoordinator:
         await self.async_refresh(full=full)
 
     async def async_refresh(self, *, full: bool = False) -> None:
+        any_ok = False
         try:
             for code, charger in self.chargers.items():
-                await self._refresh_one(code, charger, full=full)
-            self.connected = True
-            if full:
+                # Isolate per charger: one charger's transient error must not
+                # take the whole account offline.
+                try:
+                    await self._refresh_one(code, charger, full=full)
+                    any_ok = True
+                except ZeedaAuthError:
+                    raise  # token problem is account-wide -> handled below
+                except ZeedaError as err:
+                    _LOGGER.debug("Zeeda refresh failed for %s: %s", code, err)
+            self.connected = any_ok
+            if any_ok and full:
                 self._last_full = time.monotonic()
         except ZeedaAuthError:
             # token expired or revoked -> re-login once, then retry next tick
             self.connected = False
             await self._login()
-        except ZeedaError as err:
-            self.connected = False
-            _LOGGER.debug("Zeeda refresh failed: %s", err)
         self._notify()
 
     async def _refresh_one(self, code: str, charger: Charger, *, full: bool) -> None:
@@ -264,21 +285,64 @@ class ZeedaCoordinator:
                 self._session.user_id,
                 charger.connector_id,
                 self._language,
-                on_message=self._on_ws_push,
+                on_message=lambda data, c=code: self._on_ws_push(c, data),
             )
             self._ws[code] = ws
         await ws.connect()
         return ws
 
     @callback
-    def _on_ws_push(self, _data: dict) -> None:
-        """A push frame arrived — coalesce bursts into one light refresh."""
+    def _on_ws_push(self, code: str, data: dict) -> None:
+        """A push frame arrived. Parse it in place when possible (true real-time);
+        otherwise fall back to a debounced REST refresh."""
+        charger = self.chargers.get(code)
+        action = data.get("action")
+        payload = data.get("payload")
+        if charger is not None and isinstance(payload, dict):
+            if self._apply_payload(charger, action, payload):
+                self.connected = True
+                self._notify()
+                return
+        # Ack (StartCharge/StopCharge) or unknown frame -> re-read status via REST.
         if self._ws_debounce:
             self._ws_debounce.cancel()
         self._ws_debounce = self.hass.loop.call_later(
             WS_DEBOUNCE,
             lambda: self.hass.async_create_task(self.async_refresh()),
         )
+
+    @callback
+    def _apply_payload(self, charger: Charger, action: str | None, payload: dict) -> bool:
+        """Update a charger from a push payload. Returns True if anything changed.
+
+        The push `payload` (app class Payload) carries the same fields as the REST
+        `currentMeterValue`, plus `connectorStatus`. `chargingPower` is a string.
+        """
+        applied = False
+        if "connectorStatus" in payload and payload["connectorStatus"] is not None:
+            charger.status = payload["connectorStatus"]
+            applied = True
+        if "chargingPower" in payload:
+            charger.power_kw = _to_float(payload.get("chargingPower"))
+            applied = True
+        if "chargingEnergyValue" in payload:
+            charger.session_energy_kwh = payload.get("chargingEnergyValue")
+            applied = True
+        if "energyValue" in payload:
+            charger.total_energy = payload.get("energyValue")
+            applied = True
+        if "timeConsume" in payload:
+            charger.duration = payload.get("timeConsume")
+            applied = True
+        if payload.get("currentList"):
+            charger.current_a = payload["currentList"][0].get("currentValue")
+            applied = True
+        if payload.get("voltageList"):
+            charger.voltage_v = payload["voltageList"][0].get("voltageValue")
+            applied = True
+        if applied:
+            charger.raw["push"] = {"action": action, "payload": payload}
+        return applied
 
     # -- control --------------------------------------------------------------
     async def start_charge(self, code: str) -> None:

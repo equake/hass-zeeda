@@ -61,6 +61,7 @@
       },
       "power": { "name": "Charging power" },
       "session_energy": { "name": "Session energy" },
+      "total_energy": { "name": "Total energy" },
       "current": { "name": "Current" },
       "voltage": { "name": "Voltage" },
       "duration": { "name": "Session duration" },
