@@ -95,6 +95,7 @@
     }
   },
   "exceptions": {
+    "cloud_unreachable": { "message": "Could not reach the Zeeda cloud: {error}. Home Assistant will retry automatically." },
     "command_failed": { "message": "Could not send the command to the charger: {error}" },
     "command_rejected": { "message": "The charger rejected the command: {error}" },
     "invalid_charge_mode": { "message": "Unknown charging mode: {option}" },
@@ -107,6 +108,10 @@
     "charger_offline": {
       "title": "{name} is offline",
       "description": "The Zeeda charger {name} has not been connected to the Zeeda cloud for more than {minutes} minutes, so it cannot be monitored or controlled. Check that it has power and is connected to Wi-Fi. This message disappears on its own when the charger reconnects."
+    },
+    "no_chargers": {
+      "title": "No chargers on the Zeeda account",
+      "description": "The Zeeda account {account} has no chargers. Add your charger in the ZEEDA app with the same account, then wait a few minutes; this message disappears on its own when a charger shows up."
     }
   }
 }

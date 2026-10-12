@@ -127,6 +127,7 @@
     }
   },
   "exceptions": {
+    "cloud_unreachable": { "message": "Não foi possível acessar a nuvem Zeeda: {error}. O Home Assistant vai tentar de novo automaticamente." },
     "command_failed": { "message": "Não foi possível enviar o comando ao carregador: {error}" },
     "command_rejected": { "message": "O carregador recusou o comando: {error}" },
     "invalid_charge_mode": { "message": "Modo de carregamento desconhecido: {option}" },
@@ -139,6 +140,10 @@
     "charger_offline": {
       "title": "{name} está offline",
       "description": "O carregador Zeeda {name} está desconectado da nuvem Zeeda há mais de {minutes} minutos, então não pode ser monitorado nem controlado. Verifique se ele está ligado na energia e conectado ao Wi-Fi. Esta mensagem some sozinha quando o carregador se reconectar."
+    },
+    "no_chargers": {
+      "title": "Nenhum carregador na conta Zeeda",
+      "description": "A conta Zeeda {account} não tem carregadores. Adicione seu carregador no app ZEEDA com a mesma conta e aguarde alguns minutos; esta mensagem some sozinha quando um carregador aparecer."
     }
   }
 }
