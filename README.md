@@ -32,12 +32,40 @@ retail model is the *Zeeda Energy G Series 3.5–7 kW EV Charger, Type 2, IP55*.
 - **Live meter**: charging power (kW), session energy (kWh), current (A),
   voltage (V) and session duration.
 - **Start / stop charging** (switch).
-- **Charging current** (number) — adjustable **live**: if a session is running,
-  the integration pauses it, changes the amperage, and resumes, so you can do
-  dynamic power control with the car plugged in (the hardware only accepts a
-  current change while not actively charging).
+- **Charging current** (select) — a dropdown with exactly the amperages your
+  charger accepts (e.g. 8 / 16 / 32 A), adjustable **live**: if a session is
+  running, the integration pauses it, changes the amperage, and resumes, so you
+  can do dynamic power control with the car plugged in (the hardware only
+  accepts a current change while not actively charging). The change only
+  completes once the charger reports the new value; otherwise you get an error.
+- **Charging current (slider)** (number, disabled by default) — for automations
+  that compute an amperage (e.g. from solar surplus); the value is snapped to
+  the nearest accepted amperage.
 - **Charging mode** (select): *via app or card*, *plug and charge*, *scheduled*.
 - Diagnostics: firmware, Wi-Fi network.
+
+### Errors and notifications
+
+- A command that fails or that the charger does not apply shows an error in the
+  UI (and fails the automation step that sent it).
+- If the charger never confirms a command (e.g. charging did not start within
+  90 s), the integration fires a `zeeda_command_unconfirmed` event with
+  `device_id`, `charger`, `name`, `command` (`start_charge`, `stop_charge`,
+  `set_max_current`, `set_charge_mode`) and, when relevant, `value`. Example:
+
+  ```yaml
+  triggers:
+    - trigger: event
+      event_type: zeeda_command_unconfirmed
+  actions:
+    - action: notify.mobile_app_my_phone
+      data:
+        message: "{{ trigger.event.data.name }} did not confirm {{ trigger.event.data.command }}"
+  ```
+
+- A charger offline for more than 15 minutes raises a repair issue under
+  **Settings → Repairs**; it clears itself when the charger reconnects.
+- Availability changes are logged once (unavailable / available again).
 
 ## How it works
 

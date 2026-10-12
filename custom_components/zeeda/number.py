@@ -1,8 +1,10 @@
-"""Number: charging current (A), adjustable live.
+"""Number: charging current (A) as a free-form value, for automations.
 
-Setting the current while a session is on is handled by the coordinator
-(stop -> change -> start), so this can be moved at any time for dynamic power
-control with the car plugged in.
+The charger only accepts discrete amperages, so the requested value is snapped
+to the nearest accepted one. The select entity is the primary control; this
+one is disabled by default and kept for automations that compute an amperage
+(e.g. from solar surplus). Setting the current while a session is on is
+handled by the coordinator (stop -> change -> start).
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ class ZeedaCurrentNumber(ZeedaEntity, NumberEntity):
     _attr_mode = NumberMode.SLIDER
     _attr_entity_category = EntityCategory.CONFIG
     _attr_icon = "mdi:current-ac"
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: ZeedaCoordinator, code: str) -> None:
         super().__init__(coordinator, code)
