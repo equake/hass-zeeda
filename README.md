@@ -93,6 +93,13 @@ pip install -r requirements_test.txt
 python -m pytest -q
 ```
 
+## Releasing
+
+Update `version` in `custom_components/zeeda/manifest.json`, merge the change,
+then push a matching `v<version>` tag (for example, `v0.1.0`). GitHub Actions
+validates the tag, runs Ruff, pytest and Hassfest, then creates a GitHub Release
+with generated release notes. HACS can discover the update from that release.
+
 ## Brand icon
 
 The integration ships its icon under `custom_components/zeeda/brand/`
