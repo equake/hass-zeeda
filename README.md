@@ -47,8 +47,10 @@ The integration mirrors the official app:
    zone, then uses it (e.g. Brazil → `sp-device.zdenergy.com`). Your account
    only exists on its regional server, so this step matters.
 2. Logs in with your **email + password** (AES-encrypted exactly like the app).
-3. Keeps a **real-time WebSocket** per charger for push updates and commands,
-   and falls back to a light REST poll (default 60 s) when the socket drops.
+3. Keeps a **real-time WebSocket** per charger for push updates and commands;
+   if the socket drops, it reconnects automatically (retrying every 30 s), with
+   a light REST poll (default 60 s) as a safety net and the source for
+   slow-changing data.
 
 See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the reverse-engineered API.
 
