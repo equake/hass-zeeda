@@ -4,55 +4,87 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.zeeda import async_setup_entry
-from custom_components.zeeda.api import ZeedaConnectionError
+from custom_components.zeeda.api import (
+    ZeedaApi,
+    ZeedaApiError,
+    ZeedaAuthError,
+    ZeedaConnectionError,
+)
 from custom_components.zeeda.const import DOMAIN
-from custom_components.zeeda.coordinator import ZeedaCoordinator
 
 
-def _entry() -> MockConfigEntry:
-    return MockConfigEntry(
+def _entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
         domain=DOMAIN,
+        unique_id="user@example.com",
         data={
             "username": "user@example.com",
             "password": "secret",
             "timezone": "America/Sao_Paulo",
         },
     )
-
-
-@pytest.mark.asyncio
-async def test_setup_entry_asks_for_retry_when_cloud_is_unreachable(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A transient failure at boot must be retried, not parked in SETUP_ERROR."""
-    entry = _entry()
     entry.add_to_hass(hass)
+    return entry
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ZeedaConnectionError("network is down"),
+        aiohttp.ClientError("connection reset"),
+        TimeoutError(),
+    ],
+)
+async def test_transient_setup_failure_is_retried(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A transient failure at boot must land in SETUP_RETRY, not SETUP_ERROR."""
+    entry = _entry(hass)
+    monkeypatch.setattr(ZeedaApi, "login", AsyncMock(side_effect=error))
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_rejected_credentials_start_reauth(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = _entry(hass)
     monkeypatch.setattr(
-        ZeedaCoordinator,
-        "async_setup",
-        AsyncMock(side_effect=ZeedaConnectionError("network is down")),
+        ZeedaApi, "login", AsyncMock(side_effect=ZeedaAuthError("bad credentials"))
     )
 
-    with pytest.raises(ConfigEntryNotReady):
-        await async_setup_entry(hass, entry)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [flow["context"]["source"] for flow in flows] == [SOURCE_REAUTH]
 
 
-@pytest.mark.asyncio
-async def test_setup_entry_keeps_auth_failure_as_auth_failure(
-    hass, monkeypatch: pytest.MonkeyPatch
+async def test_refused_login_backs_off_across_setup_retries(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    entry = _entry()
-    entry.add_to_hass(hass)
-    monkeypatch.setattr(
-        ZeedaCoordinator,
-        "async_setup",
-        AsyncMock(side_effect=ConfigEntryAuthFailed("bad credentials")),
-    )
+    """A login refused with an undocumented code (e.g. account lockout) must not
+    be retried on every setup attempt: the backoff survives the new coordinator."""
+    entry = _entry(hass)
+    login = AsyncMock(side_effect=ZeedaApiError("9999", "account locked"))
+    monkeypatch.setattr(ZeedaApi, "login", login)
 
-    with pytest.raises(ConfigEntryAuthFailed):
-        await async_setup_entry(hass, entry)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert login.await_count == 1
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert login.await_count == 1  # still backing off: no new login attempt

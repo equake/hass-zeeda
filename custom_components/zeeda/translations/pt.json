@@ -118,6 +118,7 @@
     }
   },
   "exceptions": {
+    "cloud_unreachable": { "message": "Não foi possível acessar a nuvem Zeeda: {error}. O Home Assistant vai tentar de novo automaticamente." },
     "command_failed": { "message": "Não foi possível enviar o comando ao carregador: {error}" },
     "command_rejected": { "message": "O carregador recusou o comando: {error}" },
     "invalid_charge_mode": { "message": "Modo de carregamento desconhecido: {option}" },

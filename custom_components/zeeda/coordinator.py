@@ -34,6 +34,7 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 from .api import (
     Session,
     ZeedaApi,
+    ZeedaApiError,
     ZeedaAuthError,
     ZeedaCommandError,
     ZeedaConnectionError,
@@ -218,8 +219,14 @@ class ZeedaCoordinator:
         self._offline_issues: set[str] = set()
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
-        self._auth_failures: int = 0
-        self._auth_cooldown_until: float = 0.0
+        # Login backoff outlives this coordinator: a failed setup is retried by
+        # HA with a *new* coordinator, which must not hammer the login endpoint.
+        self._backoff_store: dict[str, tuple[int, float]] = hass.data.setdefault(
+            DOMAIN, {}
+        ).setdefault("login_backoff", {})
+        self._auth_failures, self._auth_cooldown_until = self._backoff_store.get(
+            entry.entry_id, (0, 0.0)
+        )
         self._reauth_warned: bool = False
 
         self.chargers: dict[str, Charger] = {}
@@ -227,7 +234,7 @@ class ZeedaCoordinator:
 
     # -- lifecycle ------------------------------------------------------------
     async def async_setup(self) -> None:
-        await self._login()
+        await self._attempt_login()
         await self._discover()
         await self.async_refresh(full=True)
         # Connect the real-time WebSocket per charger (primary live source).
@@ -277,19 +284,41 @@ class ZeedaCoordinator:
     async def _attempt_login(self) -> None:
         """Log in with exponential backoff so a wrong password never hammers the
         login endpoint (5 consecutive failures lock the account — and the app —
-        for 5 minutes)."""
+        for 5 minutes).
+
+        A login refused with any other business code (e.g. the lockout itself,
+        whose code is not documented yet) backs off the same way, but is
+        reported as a connection problem rather than bad credentials.
+        """
         if time.monotonic() < self._auth_cooldown_until:
             raise ZeedaConnectionError("login is backing off after a failed attempt")
         try:
             await self._login()
         except ConfigEntryAuthFailed:
-            self._auth_failures = min(self._auth_failures + 1, 5)
-            self._auth_cooldown_until = time.monotonic() + min(
-                AUTH_BACKOFF_BASE * 2 ** (self._auth_failures - 1), AUTH_BACKOFF_MAX
-            )
+            self._register_login_failure()
             raise
+        except ZeedaApiError as err:
+            self._register_login_failure()
+            _LOGGER.warning(
+                "Zeeda login refused (code %s: %s); retrying in %.0f s",
+                err.code,
+                err.message,
+                self._auth_cooldown_until - time.monotonic(),
+            )
+            raise ZeedaConnectionError(f"login refused: {err}") from err
         self._auth_failures = 0
         self._auth_cooldown_until = 0.0
+        self._backoff_store.pop(self.entry.entry_id, None)
+
+    def _register_login_failure(self) -> None:
+        self._auth_failures = min(self._auth_failures + 1, 5)
+        self._auth_cooldown_until = time.monotonic() + min(
+            AUTH_BACKOFF_BASE * 2 ** (self._auth_failures - 1), AUTH_BACKOFF_MAX
+        )
+        self._backoff_store[self.entry.entry_id] = (
+            self._auth_failures,
+            self._auth_cooldown_until,
+        )
 
     @callback
     def _start_reauth(self) -> None:

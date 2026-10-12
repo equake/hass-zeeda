@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .api import ZeedaError
-from .const import CONFIG_ENTRY_VERSION
+from .const import CONFIG_ENTRY_VERSION, DOMAIN
 from .coordinator import ZeedaCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +36,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZeedaConfigEntry) -> boo
     except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
         # A cloud hiccup at boot is transient: let HA retry with backoff instead
         # of parking the entry in SETUP_ERROR (which needs a manual reload).
-        raise ConfigEntryNotReady(f"Could not reach the Zeeda cloud: {err}") from err
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN,
+            translation_key="cloud_unreachable",
+            translation_placeholders={"error": str(err)},
+        ) from err
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
