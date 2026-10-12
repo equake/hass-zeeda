@@ -17,6 +17,7 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -36,6 +37,21 @@ def _status_slug(charger: Charger) -> str | None:
     if charger.status is None:
         return None
     return CONNECTOR_STATUS.get(charger.status, "unknown")
+
+
+def _duration_seconds(value: object) -> int | None:
+    """Parse the meter's ``"HH:MM:SS"`` session duration into seconds."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    parts = str(value).split(":")
+    if not 1 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+        return None
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return seconds
 
 
 _SENSORS: tuple[ZeedaSensorDescription, ...] = (
@@ -98,8 +114,12 @@ _SENSORS: tuple[ZeedaSensorDescription, ...] = (
     ZeedaSensorDescription(
         key="duration",
         translation_key="duration",
-        icon="mdi:timer-outline",
-        value_fn=lambda c: c.duration,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        suggested_unit_of_measurement=UnitOfTime.MINUTES,
+        suggested_display_precision=0,
+        value_fn=lambda c: _duration_seconds(c.duration),
     ),
     ZeedaSensorDescription(
         key="firmware",

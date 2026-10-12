@@ -25,6 +25,10 @@ Headers: `Authorization: <token>` (raw token, no "Bearer"), `Language: <iso>`,
 `accessType: android`, plus a `lang` cookie. Responses wrap data as
 `{code,message,messageCode,data,success}`; `success:false` with code `0001` /
 `BUSS100001` = bad credentials **or unknown account** (generic message).
+Five consecutive failed logins lock the account (and the app) for 5 minutes;
+the business code returned during that lockout is **not documented yet**. The
+integration backs off on any refused login (persisting across setup retries)
+and logs `Zeeda login refused (code …)` at warning level to capture it.
 
 ## Login
 

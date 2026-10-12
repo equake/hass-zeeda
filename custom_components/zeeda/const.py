@@ -75,6 +75,8 @@ CONNECTOR_STATUS = {
 STATUS_CHARGING = 2
 STATUS_WAITING = {3, 4}
 STATUS_FAULT = 8
+# Cable plugged into the car: connected, charging, waiting, or finished.
+PLUGGED_STATUSES = frozenset({1, STATUS_CHARGING, *STATUS_WAITING, 5})
 # A session is "on" (the Charging switch) while charging or waiting/suspended.
 ACTIVE_STATUSES = frozenset({STATUS_CHARGING} | STATUS_WAITING)
 
@@ -108,15 +110,19 @@ PENDING_STATE_TIMEOUT = 90  # seconds
 # Changing amperage while a session is on: stop, wait until the charger really
 # reports it stopped (it rejects a current change while charging), change, start.
 STOP_CONFIRM_TIMEOUT = 30  # seconds
-STOP_CONFIRM_POLL = 3  # seconds between REST status checks while waiting
+# The charger pushes its StatusNotification within seconds of stopping, so that
+# wait is push-first; REST is only a slow fallback, so a stop does not turn into
+# a burst of status reads.
+STOP_CONFIRM_REST_POLL = 10  # seconds between REST fallback checks while waiting
 CURRENT_CHANGE_SETTLE = 2  # seconds between the current change and StartCharge
 
 # Re-read state this long after a command, in case no push frame confirms it.
 CONFIRM_REFRESH_DELAY = 20  # seconds
 
 # A current / charge-mode change only completes once chargePointSetting reports
-# the new value; poll it (every STOP_CONFIRM_POLL) for up to this long.
+# the new value (the only source that can confirm it); poll it for up to this long.
 SETTING_CONFIRM_TIMEOUT = 20  # seconds
+SETTING_CONFIRM_POLL = 3  # seconds between chargePointSetting checks
 
 # Fired when the charger never confirmed a command (see AGENTS.md).
 EVENT_COMMAND_UNCONFIRMED = f"{DOMAIN}_command_unconfirmed"
@@ -125,6 +131,9 @@ EVENT_COMMAND_UNCONFIRMED = f"{DOMAIN}_command_unconfirmed"
 # the charger itself disconnected) for this long; cleared when it returns.
 OFFLINE_ISSUE_DELAY = 900  # seconds
 ISSUE_CHARGER_OFFLINE = "charger_offline"
+
+# The account has no chargers at all -> nothing to monitor or control.
+ISSUE_NO_CHARGERS = "no_chargers"
 
 # Login token lifetime is 7 days (expireTime=604800); refresh well before that.
 TOKEN_REFRESH_MARGIN = 3600  # seconds before expiry to re-login

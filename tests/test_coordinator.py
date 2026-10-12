@@ -18,6 +18,7 @@ from custom_components.zeeda.coordinator import (
     ZeedaCoordinator,
     _snap_current,
     _to_float,
+    _to_int,
 )
 
 
@@ -272,6 +273,7 @@ def _runtime_auth_coordinator() -> tuple[ZeedaCoordinator, Charger]:
     coordinator.connected = True
     coordinator._auth_failures = 0
     coordinator._auth_cooldown_until = 0.0
+    coordinator._backoff_store = {}
     coordinator._reauth_warned = False
     coordinator._available = {}
     coordinator._offline_since = {}
@@ -320,3 +322,45 @@ async def test_api_language_is_the_bare_language_code(
     entry.entry_id = "entry"
 
     assert ZeedaCoordinator(hass, entry)._language == expected
+
+
+def test_to_int_rejects_unusable_values() -> None:
+    assert _to_int("2") == 2
+    assert _to_int(2.0) == 2
+    assert _to_int("abc") is None
+    assert _to_int("") is None
+    assert _to_int(None) is None
+
+
+def test_apply_payload_coerces_string_status() -> None:
+    """A string status would silently break every `status in {...}` check."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+
+    assert coordinator._apply_payload(
+        charger, "StatusNotification", {"connectorStatus": "2"}
+    )
+
+    assert charger.status == 2
+    assert charger.status in {2}
+
+
+@pytest.mark.asyncio
+async def test_refresh_one_coerces_string_status_and_error_code() -> None:
+    """A string "0" error code is truthy and would report a phantom fault."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    coordinator._api = Mock()
+    coordinator._api.get_status_info = AsyncMock(
+        return_value={
+            "connectorStatus": "1",
+            "errorCode": "0",
+            "currentMeterValue": {},
+        }
+    )
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1, error_code=1)
+
+    await coordinator._refresh_one("Z123", charger, full=False)
+
+    assert charger.status == 1
+    assert charger.error_code == 0
+    assert bool(charger.error_code) is False
