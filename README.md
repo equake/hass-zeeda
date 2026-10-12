@@ -85,6 +85,14 @@ so the Zeeda logo shows up in **Settings → Devices & Services**. On older core
 the integration still works; only the logo is absent until it is submitted to the
 [home-assistant/brands](https://github.com/home-assistant/brands) repository.
 
+## Wi-Fi setup (get the charger online first)
+
+Before Home Assistant can see it, the charger must be joined to your Wi-Fi via
+the official ZEEDA app. GWM Brazil has a clear Portuguese walkthrough:
+
+- Original: [Aplicativo Zeeda Energy — Instruções e utilização (GWM Brasil, pt-BR)](https://www.gwmmotors.com.br/content/dam/gwm/pages/br/pt/service/manuais/manuais/aplicativo-zeedaenergy-instrucoes-e-utilizacao.pdf)
+- Local backup: [`docs/manuals/gwm-zeeda-app-pt-br.pdf`](docs/manuals/gwm-zeeda-app-pt-br.pdf)
+
 ## Notes & limitations
 
 - Unofficial. Not affiliated with Zeeda, Zhida, GWM or BYD. The cloud API is
