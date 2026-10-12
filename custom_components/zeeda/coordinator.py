@@ -194,7 +194,11 @@ class ZeedaCoordinator:
         self.entry = entry
         self._account: str = entry.data[CONF_USERNAME]
         self._password: str = entry.data[CONF_PASSWORD]
-        self._timezone: str = entry.data.get(CONF_TIMEZONE) or str(hass.config.time_zone)
+        self._timezone: str = (
+            entry.options.get(CONF_TIMEZONE)
+            or entry.data.get(CONF_TIMEZONE)
+            or str(hass.config.time_zone)
+        )
         self._interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
