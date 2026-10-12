@@ -1,3 +1,84 @@
-# hass-zeeda
-# hass-zeeda
-# hass-zeeda
+# Zeeda EV Charger — Home Assistant integration
+
+Control and monitor a **Zeeda** Wi-Fi EV charger from Home Assistant, talking
+directly to the Zeeda cloud with your app account — no extra hardware, no local
+flashing, no cloud bridge.
+
+The charger is made by **Zeeda** (Shanghai Zhida Technology / 上海挚达科技发展有限公司,
+app developer "ZHIDATECH") and is sold rebadged by several car makers — it ships
+as a "gift" with vehicles from **GWM** and **BYD**, among others. The common
+retail model is the *Zeeda Energy G Series 3.5–7 kW EV Charger, Type 2, IP55*.
+
+> If your charger is managed by the official **ZEEDA** app, it should work with
+> this integration, regardless of the car brand that handed it to you:
+> - App Store: https://apps.apple.com/br/app/zeeda/id1504210161
+> - Google Play: https://play.google.com/store/apps/details?id=com.wxzd.zdjczb
+
+## Features
+
+- **Status** sensor (standby, plugged in, charging, waiting, finished, scheduled,
+  fault, offline) plus **online**, **charging** and **fault** binary sensors.
+- **Live meter**: charging power (kW), session energy (kWh), current (A),
+  voltage (V) and session duration.
+- **Start / stop charging** (switch).
+- **Charging current** (number) — adjustable **live**: if a session is running,
+  the integration pauses it, changes the amperage, and resumes, so you can do
+  dynamic power control with the car plugged in (the hardware only accepts a
+  current change while not actively charging).
+- **Charging mode** (select): *via app or card*, *plug and charge*, *scheduled*.
+- Diagnostics: firmware, Wi-Fi network.
+
+## How it works
+
+The integration mirrors the official app:
+
+1. Asks the Zeeda bootstrap server which **regional backend** serves your time
+   zone, then uses it (e.g. Brazil → `sp-device.zdenergy.com`). Your account
+   only exists on its regional server, so this step matters.
+2. Logs in with your **email + password** (AES-encrypted exactly like the app).
+3. Keeps a **real-time WebSocket** per charger for push updates and commands,
+   and falls back to a light REST poll (default 60 s) when the socket drops.
+
+See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the reverse-engineered API.
+
+## Install
+
+### HACS (custom repository)
+
+1. HACS → ⋮ → *Custom repositories* → add this repo, category **Integration**.
+2. Install **Zeeda EV Charger**, restart Home Assistant.
+3. *Settings → Devices & services → Add integration → Zeeda*, enter your ZEEDA
+   app email and password.
+
+### Manual
+
+Copy `custom_components/zeeda` into your HA `config/custom_components/`, restart,
+then add the integration from the UI.
+
+## Options
+
+- **Status poll interval** — fallback polling cadence; the real-time WebSocket is
+  the primary source, so this can stay relaxed.
+
+## Testing the API without Home Assistant
+
+`helpers/test_client.py` is a standalone script that logs in and dumps your
+chargers and live status — handy to confirm credentials/connectivity:
+
+```bash
+pip install pycryptodome        # or: pip install cryptography
+python3 helpers/test_client.py --email you@example.com --password 'yourpass' -v
+```
+
+## Notes & limitations
+
+- Unofficial. Not affiliated with Zeeda, Zhida, GWM or BYD. The cloud API is
+  undocumented and may change at any time.
+- The *plug-and-charge* mode value is not yet confirmed against the live API; the
+  other two modes are confirmed.
+- One Home Assistant config entry = one Zeeda account; every charger on the
+  account is added as its own device.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

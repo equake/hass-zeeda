@@ -1,0 +1,168 @@
+"""Config flow for the Zeeda charger integration — email/password login."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import voluptuous as vol
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
+
+from .api import ZeedaApi, ZeedaAuthError, ZeedaError
+from .const import (
+    CONF_SCAN_INTERVAL,
+    CONF_TIMEZONE,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD, default=""): str,
+        }
+    )
+
+
+async def _validate(hass, email: str, password: str, timezone: str) -> dict[str, Any]:
+    api = ZeedaApi(async_get_clientsession(hass))
+    session = await api.login(email, password, timezone)
+    return {
+        CONF_USERNAME: email,
+        CONF_PASSWORD: password,
+        CONF_TIMEZONE: timezone,
+        "user_id": session.user_id,
+    }
+
+
+class ZeedaConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Email/password login flow."""
+
+    VERSION = CONFIG_ENTRY_VERSION
+
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return ZeedaOptionsFlow()
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            email = user_input[CONF_USERNAME].strip()
+            password = user_input[CONF_PASSWORD]
+            timezone = str(self.hass.config.time_zone)
+
+            await self.async_set_unique_id(email.lower())
+            self._abort_if_unique_id_configured()
+
+            try:
+                data = await asyncio.wait_for(
+                    _validate(self.hass, email, password, timezone), timeout=30.0
+                )
+            except ZeedaAuthError:
+                errors["base"] = "invalid_auth"
+            except (ZeedaError, TimeoutError, OSError):
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error during Zeeda setup")
+                errors["base"] = "unknown"
+            else:
+                return self.async_create_entry(title=email, data=data)
+
+        return self.async_show_form(
+            step_id="user", data_schema=_schema(), errors=errors
+        )
+
+    async def async_step_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        reauth_entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            email = reauth_entry.data[CONF_USERNAME]
+            password = user_input[CONF_PASSWORD]
+            timezone = reauth_entry.data.get(CONF_TIMEZONE) or str(
+                self.hass.config.time_zone
+            )
+            try:
+                data = await asyncio.wait_for(
+                    _validate(self.hass, email, password, timezone), timeout=30.0
+                )
+            except ZeedaAuthError:
+                errors["base"] = "invalid_auth"
+            except (ZeedaError, TimeoutError, OSError):
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry,
+                    data={**reauth_entry.data, **data},
+                    reason="reauth_successful",
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD, default=""): str}),
+            errors=errors,
+            description_placeholders={"email": reauth_entry.data[CONF_USERNAME]},
+        )
+
+
+class ZeedaOptionsFlow(OptionsFlow):
+    """Options: polling interval."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data={CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL])},
+            )
+        current = int(
+            self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SCAN_INTERVAL, default=current
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_SCAN_INTERVAL,
+                            max=MAX_SCAN_INTERVAL,
+                            step=5,
+                            unit_of_measurement="s",
+                            mode=NumberSelectorMode.SLIDER,
+                        )
+                    )
+                }
+            ),
+        )

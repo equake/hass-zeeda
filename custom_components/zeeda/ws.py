@@ -1,0 +1,159 @@
+"""Zeeda user WebSocket: real-time push + charge control commands.
+
+The app opens ``wss://<host>/ws/charge-service/websocket/user/<deviceCode>`` with
+the ``Authorization`` / ``accessType`` / ``Language`` headers, heartbeats every
+30 s, and sends command frames (StartCharge / StopCharge / ChangeConfiguration).
+We keep one connection per charger: it both receives pushed status frames and
+carries outbound commands.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import uuid
+from collections.abc import Callable
+from urllib.parse import urlparse
+
+import aiohttp
+
+from .const import (
+    ATTR_CHARGE_MODE,
+    ATTR_MAX_CURRENT,
+    USER_AGENT,
+    WS_ACTION_CHANGE_CONFIG,
+    WS_ACTION_START,
+    WS_ACTION_STOP,
+    WS_HEARTBEAT,
+    WS_PATH,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def ws_url(base_url: str, device_code: str) -> str:
+    """Build the user WS URL from the resolved REST base URL."""
+    host = urlparse(base_url).hostname or "sp-device.zdenergy.com"
+    return f"wss://{host}{WS_PATH}{device_code}"
+
+
+class ZeedaWebSocket:
+    """One persistent user-channel WebSocket for a single charger."""
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        device_code: str,
+        token: str,
+        user_id: int,
+        connector_id: int,
+        language: str,
+        on_message: Callable[[dict], None] | None = None,
+    ) -> None:
+        self._http = session
+        self._url = ws_url(base_url, device_code)
+        self._device_code = device_code
+        self._token = token
+        self._user_id = user_id
+        self._connector_id = connector_id
+        self._language = language
+        self._on_message = on_message
+
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._reader: asyncio.Task | None = None
+        self._heartbeat: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None and not self._ws.closed
+
+    async def connect(self) -> None:
+        async with self._lock:
+            if self.connected:
+                return
+            headers = {
+                "Authorization": self._token,
+                "accessType": "android",
+                "Language": self._language,
+                "User-Agent": USER_AGENT,
+            }
+            self._ws = await self._http.ws_connect(
+                self._url, headers=headers, heartbeat=WS_HEARTBEAT
+            )
+            self._reader = asyncio.create_task(self._read_loop())
+            _LOGGER.debug("WS connected: %s", self._url)
+
+    async def close(self) -> None:
+        async with self._lock:
+            for task in (self._reader, self._heartbeat):
+                if task:
+                    task.cancel()
+            self._reader = self._heartbeat = None
+            if self._ws is not None:
+                await self._ws.close()
+                self._ws = None
+
+    async def _read_loop(self) -> None:
+        assert self._ws is not None
+        try:
+            async for msg in self._ws:
+                if msg.type is aiohttp.WSMsgType.TEXT:
+                    self._dispatch(msg.data)
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("WS read loop ended for %s: %s", self._device_code, err)
+
+    def _dispatch(self, raw: str) -> None:
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return
+        if self._on_message:
+            self._on_message(data)
+
+    def _frame(self, action: str, payload: dict | None = None) -> str:
+        return json.dumps(
+            {
+                "accessType": "android",
+                "action": action,
+                "connectorId": self._connector_id,
+                "deviceCode": self._device_code,
+                "messageType": 2,
+                "payload": payload or {},
+                "uid": self._user_id,
+                "uniqueId": str(uuid.uuid4()),
+            }
+        )
+
+    async def _send(self, action: str, payload: dict | None = None) -> None:
+        await self.connect()
+        assert self._ws is not None
+        await self._ws.send_str(self._frame(action, payload))
+
+    # -- commands -------------------------------------------------------------
+    async def start_charge(self, id_tag: str = "", solar_mode: str = "") -> None:
+        await self._send(
+            WS_ACTION_START,
+            {"chargeProfileId": "", "idTag": id_tag, "solarMode": solar_mode},
+        )
+
+    async def stop_charge(self) -> None:
+        await self._send(WS_ACTION_STOP)
+
+    async def _change_config(self, name: str, value: str) -> None:
+        await self._send(
+            WS_ACTION_CHANGE_CONFIG,
+            {"setVariableData": [{"attributeValue": value, "variable": {"name": name}}]},
+        )
+
+    async def set_max_current(self, amps: int | str) -> None:
+        await self._change_config(ATTR_MAX_CURRENT, str(amps))
+
+    async def set_charge_mode(self, mode_value: str) -> None:
+        await self._change_config(ATTR_CHARGE_MODE, mode_value)
