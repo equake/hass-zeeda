@@ -6,13 +6,19 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.zeeda import coordinator as coordinator_module
 from custom_components.zeeda.api import ZeedaAuthError
-from custom_components.zeeda.const import WS_ACTION_OFFLINE, WS_ACTION_ONLINE
+from custom_components.zeeda.const import (
+    WS_ACTION_OFFLINE,
+    WS_ACTION_ONLINE,
+    WS_DEBOUNCE,
+)
 from custom_components.zeeda.coordinator import (
     Charger,
     ZeedaCoordinator,
     _snap_current,
     _to_float,
+    _to_int,
 )
 
 
@@ -64,6 +70,18 @@ def test_ignore_payload_without_supported_fields() -> None:
     assert charger.raw == {}
 
 
+def _debounce_spy(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Capture async_call_later callbacks instead of scheduling them."""
+    calls: list = []
+
+    def _call_later(_hass, delay, action):
+        calls.append((delay, action))
+        return Mock()
+
+    monkeypatch.setattr(coordinator_module, "async_call_later", _call_later)
+    return calls
+
+
 @pytest.mark.parametrize(
     ("action", "initial_online", "expected_online"),
     (
@@ -72,8 +90,12 @@ def test_ignore_payload_without_supported_fields() -> None:
     ),
 )
 def test_online_offline_push_updates_connectivity_immediately(
-    action: str, initial_online: bool, expected_online: bool
+    action: str,
+    initial_online: bool,
+    expected_online: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls = _debounce_spy(monkeypatch)
     coordinator = object.__new__(ZeedaCoordinator)
     charger = Charger(
         code="Z123",
@@ -93,7 +115,65 @@ def test_online_offline_push_updates_connectivity_immediately(
     assert charger.online is expected_online
     assert coordinator.connected is True
     coordinator._notify.assert_called_once_with()
-    coordinator.hass.loop.call_later.assert_not_called()
+    assert calls == []
+
+
+def test_unknown_push_frame_schedules_a_debounced_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _debounce_spy(monkeypatch)
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+    coordinator.chargers = {charger.code: charger}
+    coordinator._notify = Mock()
+    coordinator._ws_debounce = None
+    coordinator.async_refresh = AsyncMock()
+    coordinator.hass = Mock()
+
+    coordinator._on_ws_push(charger.code, {"action": "SomethingNew", "payload": {}})
+
+    assert [delay for delay, _ in calls] == [WS_DEBOUNCE]
+
+
+def test_a_second_frame_replaces_the_pending_debounce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _debounce_spy(monkeypatch)
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+    coordinator.chargers = {charger.code: charger}
+    coordinator._notify = Mock()
+    coordinator._ws_debounce = None
+    coordinator.async_refresh = AsyncMock()
+    coordinator.hass = Mock()
+
+    coordinator._on_ws_push(charger.code, {"action": "SomethingNew", "payload": {}})
+    first_unsub = coordinator._ws_debounce
+    coordinator._on_ws_push(charger.code, {"action": "SomethingNew", "payload": {}})
+
+    first_unsub.assert_called_once()
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_debounce_runs_a_single_light_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _debounce_spy(monkeypatch)
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+    coordinator.chargers = {charger.code: charger}
+    coordinator._notify = Mock()
+    coordinator._ws_debounce = None
+    coordinator.async_refresh = AsyncMock()
+    coordinator.hass = Mock()
+
+    coordinator._on_ws_push(charger.code, {"action": "SomethingNew", "payload": {}})
+    _delay, expires = calls[0]
+    await expires(None)
+
+    coordinator.async_refresh.assert_awaited_once_with()
+    assert coordinator._ws_debounce is None
 
 
 def test_snap_current_rounds_to_nearest_selectable_value() -> None:
@@ -193,6 +273,7 @@ def _runtime_auth_coordinator() -> tuple[ZeedaCoordinator, Charger]:
     coordinator.connected = True
     coordinator._auth_failures = 0
     coordinator._auth_cooldown_until = 0.0
+    coordinator._backoff_store = {}
     coordinator._reauth_warned = False
     coordinator._available = {}
     coordinator._offline_since = {}
@@ -225,3 +306,61 @@ async def test_refresh_stays_quiet_while_login_backs_off() -> None:
     # Still exactly one reauth trigger: the second attempt hit the backoff.
     coordinator.entry.async_start_reauth.assert_called_once_with(None)
     assert coordinator._auth_failures == 1
+
+
+@pytest.mark.parametrize(
+    ("ha_language", "expected"),
+    (("pt-BR", "pt"), ("en", "en"), ("zh-Hans", "zh"), (None, "en")),
+)
+async def test_api_language_is_the_bare_language_code(
+    hass, ha_language: str | None, expected: str
+) -> None:
+    hass.config.language = ha_language
+    entry = Mock()
+    entry.data = {"username": "user@example.com", "password": "secret"}
+    entry.options = {}
+    entry.entry_id = "entry"
+
+    assert ZeedaCoordinator(hass, entry)._language == expected
+
+
+def test_to_int_rejects_unusable_values() -> None:
+    assert _to_int("2") == 2
+    assert _to_int(2.0) == 2
+    assert _to_int("abc") is None
+    assert _to_int("") is None
+    assert _to_int(None) is None
+
+
+def test_apply_payload_coerces_string_status() -> None:
+    """A string status would silently break every `status in {...}` check."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+
+    assert coordinator._apply_payload(
+        charger, "StatusNotification", {"connectorStatus": "2"}
+    )
+
+    assert charger.status == 2
+    assert charger.status in {2}
+
+
+@pytest.mark.asyncio
+async def test_refresh_one_coerces_string_status_and_error_code() -> None:
+    """A string "0" error code is truthy and would report a phantom fault."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    coordinator._api = Mock()
+    coordinator._api.get_status_info = AsyncMock(
+        return_value={
+            "connectorStatus": "1",
+            "errorCode": "0",
+            "currentMeterValue": {},
+        }
+    )
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1, error_code=1)
+
+    await coordinator._refresh_one("Z123", charger, full=False)
+
+    assert charger.status == 1
+    assert charger.error_code == 0
+    assert bool(charger.error_code) is False
