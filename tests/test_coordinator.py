@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from custom_components.zeeda.const import WS_ACTION_OFFLINE, WS_ACTION_ONLINE
-from custom_components.zeeda.coordinator import Charger, ZeedaCoordinator, _snap_current
+from custom_components.zeeda.coordinator import (
+    Charger,
+    ZeedaCoordinator,
+    _snap_current,
+    _to_float,
+)
 
 
 def test_apply_meter_values_payload() -> None:
@@ -106,3 +111,65 @@ def test_snap_current_tie_snaps_down() -> None:
 def test_snap_current_passthrough_without_selectable_values() -> None:
     assert _snap_current((), 20) == 20
     assert _snap_current(("auto",), 20) == 20
+
+
+def test_apply_payload_coerces_numeric_strings_to_floats() -> None:
+    """The cloud is not type-stable; sensors need actual floats."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+
+    assert coordinator._apply_payload(
+        charger,
+        "MeterValues",
+        {
+            "chargingPower": "7.2",
+            "chargingEnergyValue": "3.456",
+            "energyValue": "12345",
+            "currentList": [{"currentValue": "32"}],
+            "voltageList": [{"voltageValue": "230"}],
+        },
+    )
+
+    assert charger.power_kw == 7.2
+    assert charger.session_energy_kwh == 3.456
+    assert charger.total_energy == 12345.0
+    assert charger.current_a == 32.0
+    assert charger.voltage_v == 230.0
+
+
+@pytest.mark.asyncio
+async def test_refresh_one_coerces_numeric_strings_from_rest() -> None:
+    coordinator = object.__new__(ZeedaCoordinator)
+    coordinator._api = Mock()
+    coordinator._api.get_status_info = AsyncMock(
+        return_value={
+            "connectorStatus": 2,
+            "currentMeterValue": {
+                "chargingPower": "7.2",
+                "chargingEnergyValue": "3.456",
+                "energyValue": "1234567",
+                "timeConsume": "01:00:00",
+                "currentList": [{"currentValue": "32"}],
+                "voltageList": [{"voltageValue": "230"}],
+            },
+        }
+    )
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+
+    await coordinator._refresh_one("Z123", charger, full=False)
+
+    assert charger.reachable is True
+    assert charger.status == 2
+    assert charger.power_kw == 7.2
+    assert charger.session_energy_kwh == 3.456
+    assert charger.total_energy == 1234567.0
+    assert charger.duration == "01:00:00"
+    assert charger.current_a == 32.0
+    assert charger.voltage_v == 230.0
+
+
+def test_to_float_rejects_unusable_values() -> None:
+    assert _to_float("abc") is None
+    assert _to_float("") is None
+    assert _to_float(None) is None
+    assert _to_float("7.2") == 7.2

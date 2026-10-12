@@ -54,7 +54,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _to_float(value: object) -> float | None:
-    """Coerce a number or numeric string (push `chargingPower`) to float."""
+    """Coerce a number or numeric string from the cloud to float.
+
+    The API is not type-stable: the push `chargingPower` is documented as a
+    string while its siblings are doubles, and the REST meter is unspecified —
+    device-class sensors need actual floats.
+    """
     if value is None or value == "":
         return None
     try:
@@ -322,14 +327,18 @@ class ZeedaCoordinator:
         charger.status = status.get("connectorStatus")
         charger.error_code = status.get("errorCode")
         meter = status.get("currentMeterValue") or {}
-        charger.power_kw = meter.get("chargingPower")
-        charger.session_energy_kwh = meter.get("chargingEnergyValue")
-        charger.total_energy = meter.get("energyValue")
+        charger.power_kw = _to_float(meter.get("chargingPower"))
+        charger.session_energy_kwh = _to_float(meter.get("chargingEnergyValue"))
+        charger.total_energy = _to_float(meter.get("energyValue"))
         charger.duration = meter.get("timeConsume")
         currents = meter.get("currentList") or []
-        charger.current_a = currents[0].get("currentValue") if currents else None
+        charger.current_a = (
+            _to_float(currents[0].get("currentValue")) if currents else None
+        )
         voltages = meter.get("voltageList") or []
-        charger.voltage_v = voltages[0].get("voltageValue") if voltages else None
+        charger.voltage_v = (
+            _to_float(voltages[0].get("voltageValue")) if voltages else None
+        )
 
         if not full:
             return
@@ -438,19 +447,19 @@ class ZeedaCoordinator:
             charger.power_kw = _to_float(payload.get("chargingPower"))
             applied = True
         if "chargingEnergyValue" in payload:
-            charger.session_energy_kwh = payload.get("chargingEnergyValue")
+            charger.session_energy_kwh = _to_float(payload.get("chargingEnergyValue"))
             applied = True
         if "energyValue" in payload:
-            charger.total_energy = payload.get("energyValue")
+            charger.total_energy = _to_float(payload.get("energyValue"))
             applied = True
         if "timeConsume" in payload:
             charger.duration = payload.get("timeConsume")
             applied = True
         if payload.get("currentList"):
-            charger.current_a = payload["currentList"][0].get("currentValue")
+            charger.current_a = _to_float(payload["currentList"][0].get("currentValue"))
             applied = True
         if payload.get("voltageList"):
-            charger.voltage_v = payload["voltageList"][0].get("voltageValue")
+            charger.voltage_v = _to_float(payload["voltageList"][0].get("voltageValue"))
             applied = True
         if applied:
             charger.raw["push"] = {"action": action, "payload": payload}
