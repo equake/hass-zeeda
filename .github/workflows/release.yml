@@ -5,28 +5,51 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
   validate:
-    name: Validate
+    name: Validate release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
+      - name: Verify tag matches integration version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = json.loads(
+              Path("custom_components/zeeda/manifest.json").read_text()
+          )["version"]
+          expected_tag = f"v{version}"
+          if os.environ["RELEASE_TAG"] != expected_tag:
+              raise SystemExit(
+                  f"Tag {os.environ['RELEASE_TAG']} does not match manifest version {expected_tag}"
+              )
+          PY
+      - run: pip install -r requirements_test.txt
       - run: pip install ruff
-      - run: ruff check custom_components/
+      - run: ruff check custom_components/ tests/
+      - run: python -m pytest -q
       - uses: home-assistant/actions/hassfest@master
 
   release:
-    name: Create Release
+    name: Create GitHub Release
     needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Create Release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
