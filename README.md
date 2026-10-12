@@ -1,8 +1,14 @@
+<img src="images/logo.png" alt="Zeeda Energy" width="96" align="right">
+
 # Zeeda EV Charger — Home Assistant integration
 
 Control and monitor a **Zeeda** Wi-Fi EV charger from Home Assistant, talking
 directly to the Zeeda cloud with your app account — no extra hardware, no local
 flashing, no cloud bridge.
+
+<p align="center">
+  <img src="images/device.jpg" alt="Zeeda Energy G-series Wi-Fi EV charger" width="320">
+</p>
 
 The charger is made by **Zeeda** (Shanghai Zhida Technology / 上海挚达科技发展有限公司,
 app developer "ZHIDATECH") and is sold rebadged by several car makers — it ships
@@ -69,6 +75,15 @@ chargers and live status — handy to confirm credentials/connectivity:
 pip install pycryptodome        # or: pip install cryptography
 python3 helpers/test_client.py --email you@example.com --password 'yourpass' -v
 ```
+
+## Brand icon
+
+The integration ships its icon under `custom_components/zeeda/brand/`
+(`icon.png` 256×256 and `icon@2x.png` 512×512, both RGBA). Home Assistant 2026.3+
+serves it via the Brands Proxy API (`GET /api/brands/integration/zeeda/icon.png`),
+so the Zeeda logo shows up in **Settings → Devices & Services**. On older cores
+the integration still works; only the logo is absent until it is submitted to the
+[home-assistant/brands](https://github.com/home-assistant/brands) repository.
 
 ## Notes & limitations
 
