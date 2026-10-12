@@ -218,6 +218,7 @@ class ZeedaCoordinator:
         self._offline_since: dict[str, float] = {}
         self._offline_issues: set[str] = set()
         self._no_chargers_issue = False
+        self._removal_strikes = 0
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
         self._auth_failures: int = 0
@@ -332,10 +333,10 @@ class ZeedaCoordinator:
             await ws.close()
 
     async def _discover(self) -> bool:
-        """Reconcile the account's chargers; returns True when the set changed.
+        """Build the account's chargers at setup; returns True when the set changed.
 
-        Called at setup and on every full refresh, so a charger added or removed
-        in the Zeeda app shows up without a manual reload.
+        Runtime changes go through ``_reconcile_chargers``, which reloads the
+        entry so this rebuilds devices and entities from scratch.
         """
         assert self._session is not None
         items = await self._api.get_user_charge(
@@ -394,7 +395,7 @@ class ZeedaCoordinator:
                 DOMAIN,
                 ISSUE_NO_CHARGERS,
                 is_fixable=False,
-                severity=ir.IssueSeverity.WARNING,
+                severity=ir.IssueSeverity.ERROR,
                 translation_key=ISSUE_NO_CHARGERS,
                 translation_placeholders={"account": self._account},
             )
@@ -434,13 +435,38 @@ class ZeedaCoordinator:
             self._start_reauth()
 
     async def _reconcile_chargers(self) -> bool:
-        """Re-discover the account's chargers; reload if the set changed."""
+        """Re-check the account's chargers; reload if the set really changed.
+
+        Does not touch ``self.chargers``: entities of a removed charger still
+        read it until the reload rebuilds everything. A new charger reloads at
+        once; a removal (or an empty list) must be seen on two consecutive full
+        refreshes, so one bad cloud answer cannot drop every entity. Skipped
+        while a command runs, so a reload never cuts a stop -> change -> start.
+        """
+        if self._command_lock.locked():
+            return False
+        assert self._session is not None
         try:
-            changed = await self._discover()
+            items = await self._api.get_user_charge(
+                self._session.user_id, self._session.org_id
+            )
         except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.debug("Zeeda charger re-discovery failed: %s", err)
             return False
-        if not changed:
+        codes = {
+            code
+            for item in items
+            if (code := (item.get("chargePointVO") or {}).get("chargePointCode"))
+        }
+        added = codes - self.chargers.keys()
+        removed = self.chargers.keys() - codes
+        self._removal_strikes = self._removal_strikes + 1 if removed else 0
+        if not added and (not removed or self._removal_strikes < 2):
+            if removed:
+                _LOGGER.debug(
+                    "Zeeda charger(s) %s missing from the account; confirming",
+                    ", ".join(sorted(removed)),
+                )
             return False
         # Chargers were added or removed in the Zeeda app: reload so the device
         # and entity set matches instead of keeping stale ones (or missing new

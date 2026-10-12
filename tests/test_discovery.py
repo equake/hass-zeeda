@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -46,7 +47,15 @@ def _coordinator(hass) -> ZeedaCoordinator:
     coordinator._offline_since = {}
     coordinator._offline_issues = set()
     coordinator._no_chargers_issue = False
+    coordinator._removal_strikes = 0
+    coordinator._command_lock = asyncio.Lock()
     return coordinator
+
+
+def _known(coordinator: ZeedaCoordinator, *codes: str) -> None:
+    coordinator.hass = Mock()  # captures async_schedule_reload
+    for code in codes:
+        coordinator.chargers[code] = Charger(code=code, name=code, charge_point_id=1)
 
 
 @pytest.mark.asyncio
@@ -110,3 +119,55 @@ async def test_remove_device_only_allows_forgotten_chargers(hass) -> None:
 
     assert await async_remove_config_entry_device(hass, entry, known) is False
     assert await async_remove_config_entry_device(hass, entry, forgotten) is True
+
+
+# -- runtime reconciliation ---------------------------------------------------
+async def test_reconcile_reloads_at_once_when_a_charger_is_added(hass) -> None:
+    coordinator = _coordinator(hass)
+    _known(coordinator, "Z1")
+    coordinator._api.get_user_charge = AsyncMock(
+        return_value=[_item("Z1"), _item("Z2")]
+    )
+
+    assert await coordinator._reconcile_chargers() is True
+    coordinator.hass.config_entries.async_schedule_reload.assert_called_once()
+    assert set(coordinator.chargers) == {"Z1"}  # untouched until the reload
+
+
+async def test_reconcile_needs_two_misses_before_dropping(hass) -> None:
+    """One empty/bad answer from the cloud must not drop every entity."""
+    coordinator = _coordinator(hass)
+    _known(coordinator, "Z1")
+    coordinator._api.get_user_charge = AsyncMock(return_value=[])
+
+    assert await coordinator._reconcile_chargers() is False
+    coordinator.hass.config_entries.async_schedule_reload.assert_not_called()
+    assert set(coordinator.chargers) == {"Z1"}
+
+    assert await coordinator._reconcile_chargers() is True
+    coordinator.hass.config_entries.async_schedule_reload.assert_called_once()
+
+
+async def test_reconcile_resets_misses_when_the_charger_returns(hass) -> None:
+    coordinator = _coordinator(hass)
+    _known(coordinator, "Z1")
+    coordinator._api.get_user_charge = AsyncMock(return_value=[])
+    await coordinator._reconcile_chargers()
+
+    coordinator._api.get_user_charge = AsyncMock(return_value=[_item("Z1")])
+    assert await coordinator._reconcile_chargers() is False
+    coordinator._api.get_user_charge = AsyncMock(return_value=[])
+    assert await coordinator._reconcile_chargers() is False  # strike 1 again
+
+    coordinator.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+async def test_reconcile_is_skipped_while_a_command_runs(hass) -> None:
+    coordinator = _coordinator(hass)
+    _known(coordinator)
+    coordinator._api.get_user_charge = AsyncMock(return_value=[_item("Z1")])
+
+    async with coordinator._command_lock:
+        assert await coordinator._reconcile_chargers() is False
+
+    coordinator._api.get_user_charge.assert_not_awaited()
