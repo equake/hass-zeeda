@@ -115,5 +115,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "command_failed": { "message": "Não foi possível enviar o comando ao carregador: {error}" },
+    "command_rejected": { "message": "O carregador recusou o comando: {error}" },
+    "stop_not_confirmed": { "message": "O carregador não parou de carregar a tempo, então a corrente de carga não foi alterada." }
   }
 }

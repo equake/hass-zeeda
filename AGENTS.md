@@ -70,11 +70,24 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
   `CycleReservation-Charge` = scheduled; all confirmed live).
 - Amperage: WS `ChangeConfiguration`, attributeName `MaxChargeCurrent`.
   **The charger only accepts a current change while not actively charging.** So
-  `ZeedaCoordinator.set_max_current` orchestrates stop → change → start when a
-  session is live (`CURRENT_CHANGE_PAUSE` between steps). This is the dynamic
-  power-control feature. Only the discrete values from `currentList` are
-  accepted, so requested amps are snapped to the nearest selectable value
-  (`_snap_current`; ties snap down).
+  `ZeedaCoordinator.set_max_current` orchestrates stop → wait until the charger
+  reports it stopped (push or REST, `STOP_CONFIRM_TIMEOUT`) → change → start,
+  **only if the session was on** (`ACTIVE_STATUSES` = charging/waiting, the same
+  rule as the Charging switch). It restarts even if the change is rejected, and
+  aborts (restarting) if the charger never reports stopped. If the session was
+  off, only the current is changed. This is the dynamic power-control feature.
+  Only the discrete values from `currentList` are accepted, so requested amps
+  are snapped to the nearest selectable value (`_snap_current`; ties snap down).
+- **Command acks:** every command waits for its WS ack (`ZeedaWebSocket.send_and_wait`,
+  matched by `uniqueId`, else by `action`). `success:false` → `ZeedaCommandError`
+  → `HomeAssistantError` (translated, `exceptions` in `strings.json`). No ack in
+  `COMMAND_ACK_TIMEOUT` = unconfirmed, not an error.
+- **Pending state:** the charger reports a new state seconds to ~1 min after a
+  command. A confirmed command sets a pending value on the `Charger`
+  (`charging_on`, `effective_max_current`, `effective_charge_mode`) shown
+  immediately; stale reads that contradict it are ignored until a read confirms
+  it (`Charger.reconcile`) or `PENDING_STATE_TIMEOUT` expires. Never refresh right
+  after a command — schedule a confirm refresh (`CONFIRM_REFRESH_DELAY`) instead.
 
 ## Coding Conventions
 
@@ -98,6 +111,7 @@ ruff check custom_components/
 
 ## Open items / TODO
 
-- Confirm `StartCharge`/`StopCharge`/`ChangeConfiguration` against the physical charger.
+- Confirm `StartCharge`/`StopCharge`/`ChangeConfiguration` against the physical charger,
+  and record the exact ack frame shape (does it echo `uniqueId`?) in `docs/PROTOCOL.md`.
 - Consider mapping `connectorStatus` finer and exposing reservation times.
 - Add a pytest suite (encrypt vector, payload parsing, config flow) and the CI job.

@@ -42,7 +42,7 @@ class ZeedaChargeModeSelect(ZeedaEntity, SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        return CHARGE_MODES.get(self._charger.charge_mode)
+        return CHARGE_MODES.get(self._charger.effective_charge_mode)
 
     async def async_select_option(self, option: str) -> None:
         value = CHARGE_MODE_BY_SLUG.get(option)

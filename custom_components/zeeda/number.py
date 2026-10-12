@@ -1,8 +1,8 @@
 """Number: charging current (A), adjustable live.
 
-Setting the current while a session is actively charging is handled by the
-coordinator (stop -> change -> start), so this can be moved at any time for
-dynamic power control with the car plugged in.
+Setting the current while a session is on is handled by the coordinator
+(stop -> change -> start), so this can be moved at any time for dynamic power
+control with the car plugged in.
 """
 
 from __future__ import annotations
@@ -55,7 +55,8 @@ class ZeedaCurrentNumber(ZeedaEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        return float(self._charger.max_current) if self._charger.max_current else None
+        value = self._charger.effective_max_current
+        return float(value) if value else None
 
     async def async_set_native_value(self, value: float) -> None:
         await self._coordinator.set_max_current(self._code, int(value))

@@ -60,6 +60,10 @@ class ZeedaApiError(ZeedaError):
         self.message = message
 
 
+class ZeedaCommandError(ZeedaError):
+    """The charger rejected a control command (WebSocket ack with success=false)."""
+
+
 def encrypt_password(plaintext: str) -> str:
     """AES-128/CBC/PKCS5 encrypt and return UPPERCASE hex, exactly like the app."""
     raw = plaintext.encode("utf-8")

@@ -74,6 +74,8 @@ CONNECTOR_STATUS = {
 }
 STATUS_CHARGING = 2
 STATUS_WAITING = {3, 4}
+# A session is "on" (the Charging switch) while charging or waiting/suspended.
+ACTIVE_STATUSES = frozenset({STATUS_CHARGING} | STATUS_WAITING)
 
 # --- config / options --------------------------------------------------------
 CONF_TIMEZONE = "timezone"
@@ -95,10 +97,21 @@ WS_DEBOUNCE = 1.5  # seconds
 # Default max-current ceiling if the device advertises nothing useful.
 DEFAULT_CURRENT_OPTIONS = ("8", "16", "32")
 
-# Seconds to wait between StopCharge and re-applying current / StartCharge when
-# changing amperage while plugged in (the hardware only accepts a current change
-# while not actively charging).
-CURRENT_CHANGE_PAUSE = 6.0
+# The cloud acks each command on the WebSocket; wait this long for it.
+COMMAND_ACK_TIMEOUT = 10  # seconds
+
+# The charger reports the new state seconds to ~1 min after a command. Hold the
+# commanded value this long, ignoring stale reads, until a read confirms it.
+PENDING_STATE_TIMEOUT = 90  # seconds
+
+# Changing amperage while a session is on: stop, wait until the charger really
+# reports it stopped (it rejects a current change while charging), change, start.
+STOP_CONFIRM_TIMEOUT = 30  # seconds
+STOP_CONFIRM_POLL = 3  # seconds between REST status checks while waiting
+CURRENT_CHANGE_SETTLE = 2  # seconds between the current change and StartCharge
+
+# Re-read state this long after a command, in case no push frame confirms it.
+CONFIRM_REFRESH_DELAY = 20  # seconds
 
 # Login token lifetime is 7 days (expireTime=604800); refresh well before that.
 TOKEN_REFRESH_MARGIN = 3600  # seconds before expiry to re-login

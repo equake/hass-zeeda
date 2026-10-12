@@ -4,7 +4,8 @@ The app opens ``wss://<host>/ws/charge-service/websocket/user/<deviceCode>`` wit
 the ``Authorization`` / ``accessType`` / ``Language`` headers, heartbeats every
 30 s, and sends command frames (StartCharge / StopCharge / ChangeConfiguration).
 We keep one connection per charger: it both receives pushed status frames and
-carries outbound commands.
+carries outbound commands. Each command waits for the server's ack frame (same
+``action``, carrying ``success``) so a rejected command surfaces as an error.
 """
 
 from __future__ import annotations
@@ -18,9 +19,11 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from .api import ZeedaCommandError, ZeedaConnectionError
 from .const import (
     ATTR_CHARGE_MODE,
     ATTR_MAX_CURRENT,
+    COMMAND_ACK_TIMEOUT,
     RECONNECT_DELAY,
     USER_AGENT,
     WS_ACTION_CHANGE_CONFIG,
@@ -72,6 +75,8 @@ class ZeedaWebSocket:
         self._reconnect_task: asyncio.Task | None = None
         self._closing = False
         self._lock = asyncio.Lock()
+        # uniqueId -> (action, future) for commands awaiting their ack.
+        self._pending: dict[str, tuple[str, asyncio.Future[dict]]] = {}
 
     @property
     def connected(self) -> bool:
@@ -96,6 +101,7 @@ class ZeedaWebSocket:
             _LOGGER.debug("WS connected: %s", self._url)
 
     async def close(self) -> None:
+        self._fail_pending("WebSocket closed")
         async with self._lock:
             self._closing = True
             for task in (self._reader, self._reconnect_task):
@@ -120,6 +126,7 @@ class ZeedaWebSocket:
             _LOGGER.debug("WS read loop ended for %s: %s", self._device_code, err)
         # Reached only when the socket dropped on its own (a cancellation
         # re-raises above) -> reconnect in the background.
+        self._fail_pending("WebSocket disconnected")
         self._schedule_reconnect()
 
     def _schedule_reconnect(self) -> None:
@@ -143,15 +150,44 @@ class ZeedaWebSocket:
                 )
                 await asyncio.sleep(RECONNECT_DELAY)
 
+    def _fail_pending(self, reason: str) -> None:
+        for _action, future in self._pending.values():
+            if not future.done():
+                future.set_exception(ZeedaConnectionError(reason))
+        self._pending.clear()
+
     def _dispatch(self, raw: str) -> None:
         try:
             data = json.loads(raw)
         except ValueError:
             return
+        if not isinstance(data, dict):
+            return
+        self._resolve_ack(data)
         if self._on_message:
             self._on_message(data)
 
-    def _frame(self, action: str, payload: dict | None = None) -> str:
+    def _resolve_ack(self, data: dict) -> None:
+        """Hand an ack frame to the command waiting for it.
+
+        Matched by ``uniqueId`` when the server echoes it, else by ``action``
+        (oldest pending command first).
+        """
+        if not self._pending:
+            return
+        key = data.get("uniqueId")
+        if key not in self._pending:
+            action = data.get("action")
+            key = next(
+                (k for k, (a, _f) in self._pending.items() if a == action), None
+            )
+        if key is None:
+            return
+        _action, future = self._pending.pop(key)
+        if not future.done():
+            future.set_result(data)
+
+    def _frame(self, action: str, unique_id: str, payload: dict | None = None) -> str:
         return json.dumps(
             {
                 "accessType": "android",
@@ -161,33 +197,67 @@ class ZeedaWebSocket:
                 "messageType": 2,
                 "payload": payload or {},
                 "uid": self._user_id,
-                "uniqueId": str(uuid.uuid4()),
+                "uniqueId": unique_id,
             }
         )
 
-    async def _send(self, action: str, payload: dict | None = None) -> None:
-        await self.connect()
-        assert self._ws is not None
-        await self._ws.send_str(self._frame(action, payload))
+    async def send_and_wait(
+        self,
+        action: str,
+        payload: dict | None = None,
+        timeout: float = COMMAND_ACK_TIMEOUT,
+    ) -> dict | None:
+        """Send a command and wait for its ack.
+
+        Returns the ack frame, or None if none arrived in time (unconfirmed, not
+        an error). Raises ZeedaCommandError if the ack reports success=false.
+        """
+        unique_id = str(uuid.uuid4())
+        future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        self._pending[unique_id] = (action, future)
+        try:
+            try:
+                await self.connect()
+                assert self._ws is not None
+                await self._ws.send_str(self._frame(action, unique_id, payload))
+            except (aiohttp.ClientError, ConnectionError, TimeoutError) as err:
+                raise ZeedaConnectionError(f"{action} send failed: {err}") from err
+            try:
+                ack = await asyncio.wait_for(future, timeout)
+            except TimeoutError:
+                _LOGGER.debug(
+                    "No ack for %s on %s within %ss", action, self._device_code, timeout
+                )
+                return None
+        finally:
+            self._pending.pop(unique_id, None)
+        _LOGGER.debug("Ack for %s on %s: %s", action, self._device_code, ack)
+        if ack.get("success") is False:
+            raise ZeedaCommandError(
+                f"{action} rejected: {ack.get('message') or 'no reason given'}"
+            )
+        return ack
 
     # -- commands -------------------------------------------------------------
-    async def start_charge(self, id_tag: str = "", solar_mode: str = "") -> None:
-        await self._send(
+    async def start_charge(
+        self, id_tag: str = "", solar_mode: str = ""
+    ) -> dict | None:
+        return await self.send_and_wait(
             WS_ACTION_START,
             {"chargeProfileId": "", "idTag": id_tag, "solarMode": solar_mode},
         )
 
-    async def stop_charge(self) -> None:
-        await self._send(WS_ACTION_STOP)
+    async def stop_charge(self) -> dict | None:
+        return await self.send_and_wait(WS_ACTION_STOP)
 
-    async def _change_config(self, name: str, value: str) -> None:
-        await self._send(
+    async def _change_config(self, name: str, value: str) -> dict | None:
+        return await self.send_and_wait(
             WS_ACTION_CHANGE_CONFIG,
             {"setVariableData": [{"attributeValue": value, "variable": {"name": name}}]},
         )
 
-    async def set_max_current(self, amps: int | str) -> None:
-        await self._change_config(ATTR_MAX_CURRENT, str(amps))
+    async def set_max_current(self, amps: int | str) -> dict | None:
+        return await self._change_config(ATTR_MAX_CURRENT, str(amps))
 
-    async def set_charge_mode(self, mode_value: str) -> None:
-        await self._change_config(ATTR_CHARGE_MODE, mode_value)
+    async def set_charge_mode(self, mode_value: str) -> dict | None:
+        return await self._change_config(ATTR_CHARGE_MODE, mode_value)
