@@ -36,8 +36,11 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 - **Config entry** = one Zeeda account; `type ZeedaConfigEntry = ConfigEntry[ZeedaCoordinator]`.
 - Each charger (keyed by `chargePointCode`) becomes one HA device.
 - **Hybrid data flow** (efficiency):
-  - The **WebSocket** is the primary real-time source. A push frame triggers a
-    debounced *light* refresh (`getChargeStatusInfo` only).
+  - The **WebSocket** is the primary real-time source. Push frames are parsed in
+    place (`_apply_payload`): `StatusNotification` → `connectorStatus`,
+    `MeterValues` → power/energy/current/voltage/duration. Only command acks
+    (`StartCharge`/`StopCharge`) and unknown frames fall back to a debounced REST
+    refresh.
   - REST poll is a **fallback** (default 60 s) and the source for slow-changing
     data. A *full* refresh (`+ getChargePointDetail + chargePointSetting`) runs
     every `FULL_REFRESH_INTERVAL` (5 min) and after any config-changing command.
@@ -81,7 +84,8 @@ ruff check custom_components/
 
 ## Open items / TODO
 
-- Confirm the plug-and-charge `ChargeMode` value against the live API.
-- Confirm the WebSocket **push frame** schema and parse it directly (today a push
-  only triggers a REST refresh). Capture with `helpers/test_client.py --ws`.
+- Confirm the plug-and-charge `ChargeMode` value against the live API (set it in
+  the app, then read `chargePointSetting.chargeMode`).
+- Confirm `StartCharge`/`StopCharge`/`ChangeConfiguration` against the physical charger.
 - Consider mapping `connectorStatus` finer and exposing reservation times.
+- Add a pytest suite (encrypt vector, payload parsing, config flow) and the CI job.

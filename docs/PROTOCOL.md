@@ -85,7 +85,19 @@ Outbound frame:
     - `CycleReservation-Charge` — scheduled ✓ confirmed
     - plug-and-charge — value **TODO: confirm live**
 
-The app receives pushed status frames on the same socket (`WebSocketRecived`:
+### Inbound push frames
+
+The server pushes frames on the same socket (`WebSocketRecived`:
 `{accessType,action,connectorId,deviceCode,message,messageType,payload,success,uid,uniqueId}`).
-This integration currently treats any push as a "refresh now" trigger rather than
-parsing the frame; confirm the payload schema and parse directly later.
+Received actions and how the app parses them (both into the `Payload` class):
+
+- **StatusNotification** — `payload.connectorStatus` (int), plus `solarErrorLevel` /
+  `solarErrorType`. Connector state change.
+- **MeterValues** — `payload`: `chargingPower` (**string**), `chargingEnergyValue`
+  (double, session kWh), `energyValue` (double, lifetime), `currentList[].currentValue`,
+  `voltageList[].voltageValue`, `timeConsume`, `uploadTimeStamp`.
+- **StartCharge / StopCharge** — command acks carrying `success`.
+
+`Payload` is the same shape as the REST `currentMeterValue` plus `connectorStatus`,
+so the integration parses these frames directly (`_apply_payload`) for true
+real-time updates; only acks/unknown frames fall back to a REST refresh.
