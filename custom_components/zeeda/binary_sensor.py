@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ZeedaConfigEntry
-from .const import STATUS_CHARGING, STATUS_FAULT
+from .const import PLUGGED_STATUSES, STATUS_CHARGING, STATUS_FAULT
 from .coordinator import Charger, ZeedaCoordinator
 from .entity import ZeedaEntity
 
@@ -36,6 +36,12 @@ _BINARY_SENSORS: tuple[ZeedaBinaryDescription, ...] = (
         always_available=True,
     ),
     ZeedaBinaryDescription(
+        key="plugged",
+        translation_key="plugged",
+        device_class=BinarySensorDeviceClass.PLUG,
+        value_fn=lambda c: c.status in PLUGGED_STATUSES,
+    ),
+    ZeedaBinaryDescription(
         key="charging",
         translation_key="charging",
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
@@ -47,6 +53,24 @@ _BINARY_SENSORS: tuple[ZeedaBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: bool(c.error_code) or c.status == STATUS_FAULT,
+    ),
+    # Static capabilities reported by getChargePointDetail; only useful to the
+    # few chargers that have them, so they stay disabled until enabled by hand.
+    ZeedaBinaryDescription(
+        key="solar",
+        translation_key="solar",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:solar-power",
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.support_solar,
+    ),
+    ZeedaBinaryDescription(
+        key="load_balancing",
+        translation_key="load_balancing",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:home-lightning-bolt-outline",
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.support_load_balancing,
     ),
 )
 

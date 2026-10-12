@@ -75,6 +75,8 @@ CONNECTOR_STATUS = {
 STATUS_CHARGING = 2
 STATUS_WAITING = {3, 4}
 STATUS_FAULT = 8
+# Cable plugged into the car: connected, charging, waiting, or finished.
+PLUGGED_STATUSES = frozenset({1, STATUS_CHARGING, *STATUS_WAITING, 5})
 # A session is "on" (the Charging switch) while charging or waiting/suspended.
 ACTIVE_STATUSES = frozenset({STATUS_CHARGING} | STATUS_WAITING)
 
