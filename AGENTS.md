@@ -17,6 +17,7 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 | Maker | Shanghai Zhida Technology (ZHIDATECH) |
 | App | `com.wxzd.zdjczb` (ZEEDA) |
 | Protocol | Zeeda cloud: REST + user WebSocket (see `docs/PROTOCOL.md`) |
+| Min HA | 2026.3.0 |
 | Min Python | 3.12 |
 
 ## Key Files
