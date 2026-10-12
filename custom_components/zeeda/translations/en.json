@@ -3,10 +3,15 @@
     "step": {
       "user": {
         "title": "Zeeda EV Charger",
-        "description": "Sign in with your ZEEDA app account (email and password). The integration finds the right regional server for you automatically.",
+        "description": "Sign in with your ZEEDA app account.",
         "data": {
-          "username": "Email",
-          "password": "Password"
+          "username": "Email or phone number",
+          "password": "Password",
+          "timezone": "Time zone"
+        },
+        "data_description": {
+          "username": "The email is confirmed to work; phone number is best-effort.",
+          "timezone": "The Zeeda regional server is chosen by this time zone. Defaults to Home Assistant's, but set your account's region if HA runs elsewhere (e.g. in the cloud)."
         }
       },
       "reauth_confirm": {
