@@ -70,8 +70,11 @@
     },
     "binary_sensor": {
       "online": { "name": "Online" },
+      "plugged": { "name": "Plugged in" },
       "charging": { "name": "Charging" },
-      "fault": { "name": "Fault" }
+      "fault": { "name": "Fault" },
+      "solar": { "name": "Solar support" },
+      "load_balancing": { "name": "Load balancing support" }
     },
     "switch": {
       "charge": { "name": "Charging" }

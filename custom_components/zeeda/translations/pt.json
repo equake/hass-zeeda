@@ -88,11 +88,20 @@
       "online": {
         "name": "Online"
       },
+      "plugged": {
+        "name": "Conectado ao carro"
+      },
       "charging": {
         "name": "Carregando"
       },
       "fault": {
         "name": "Falha"
+      },
+      "solar": {
+        "name": "Suporte a solar"
+      },
+      "load_balancing": {
+        "name": "Suporte a balanceamento de carga"
       }
     },
     "switch": {
