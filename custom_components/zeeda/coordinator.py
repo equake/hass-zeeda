@@ -96,6 +96,21 @@ def _snap_current(options: tuple[str, ...], amps: int) -> int:
     return min(values, key=lambda value: abs(value - amps))
 
 
+def _to_int(value: object) -> int | None:
+    """Coerce an int-ish value from the cloud to int.
+
+    The API is not type-stable, and a string status would silently break every
+    ``status in {...}`` comparison (a string ``"0"`` error code is also truthy,
+    which would report a phantom fault).
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Charger:
     """Latest known state for one charge point."""
@@ -434,8 +449,8 @@ class ZeedaCoordinator:
             raise
         charger.reachable = True
         charger.raw["status"] = status
-        charger.status = status.get("connectorStatus")
-        charger.error_code = status.get("errorCode")
+        charger.status = _to_int(status.get("connectorStatus"))
+        charger.error_code = _to_int(status.get("errorCode"))
         meter = status.get("currentMeterValue") or {}
         charger.power_kw = _to_float(meter.get("chargingPower"))
         charger.session_energy_kwh = _to_float(meter.get("chargingEnergyValue"))
@@ -465,8 +480,7 @@ class ZeedaCoordinator:
         charger.support_solar = bool(detail.get("supportSolarMode"))
         charger.support_load_balancing = bool(detail.get("supportLoadBalancing"))
         charger.charge_mode = setting.get("chargeMode")
-        max_current = setting.get("maxChargeCurrent")
-        charger.max_current = int(max_current) if max_current else charger.max_current
+        charger.max_current = _to_int(setting.get("maxChargeCurrent")) or charger.max_current
         charger.reconcile(settings=True)
 
     # -- listeners ------------------------------------------------------------
@@ -623,7 +637,7 @@ class ZeedaCoordinator:
         """
         applied = False
         if "connectorStatus" in payload and payload["connectorStatus"] is not None:
-            charger.status = payload["connectorStatus"]
+            charger.status = _to_int(payload["connectorStatus"])
             applied = True
         if "chargingPower" in payload:
             charger.power_kw = _to_float(payload.get("chargingPower"))
