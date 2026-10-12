@@ -55,8 +55,9 @@ from .const import (
     ISSUE_CHARGER_OFFLINE,
     OFFLINE_ISSUE_DELAY,
     PENDING_STATE_TIMEOUT,
+    SETTING_CONFIRM_POLL,
     SETTING_CONFIRM_TIMEOUT,
-    STOP_CONFIRM_POLL,
+    STOP_CONFIRM_REST_POLL,
     STOP_CONFIRM_TIMEOUT,
     TOKEN_REFRESH_MARGIN,
     WS_ACTION_OFFLINE,
@@ -729,7 +730,7 @@ class ZeedaCoordinator:
         """Poll chargePointSetting until ``key`` reports ``expected``."""
         deadline = time.monotonic() + SETTING_CONFIRM_TIMEOUT
         while time.monotonic() < deadline:
-            await asyncio.sleep(STOP_CONFIRM_POLL)
+            await asyncio.sleep(SETTING_CONFIRM_POLL)
             try:
                 setting = await self._api.get_point_setting(code)
             except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
@@ -762,15 +763,20 @@ class ZeedaCoordinator:
                 self._notify()
 
     async def _wait_until_stopped(self, code: str, charger: Charger) -> bool:
-        """Wait until the charger reports the session stopped (push or REST)."""
+        """Wait until the charger reports the session stopped.
+
+        The pushed StatusNotification normally confirms it within seconds, so
+        this checks the in-memory status every second and only falls back to a
+        slow REST poll — a fast one would burst status reads at the cloud.
+        """
         deadline = time.monotonic() + STOP_CONFIRM_TIMEOUT
-        next_poll = time.monotonic() + STOP_CONFIRM_POLL
+        next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             if charger.status not in ACTIVE_STATUSES:
                 return True
             if time.monotonic() >= next_poll:
-                next_poll = time.monotonic() + STOP_CONFIRM_POLL
+                next_poll = time.monotonic() + STOP_CONFIRM_REST_POLL
                 try:
                     await self._refresh_one(code, charger, full=False)
                 except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
