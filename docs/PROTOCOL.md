@@ -96,7 +96,10 @@ Received actions and how the app parses them (both into the `Payload` class):
 - **MeterValues** — `payload`: `chargingPower` (**string**), `chargingEnergyValue`
   (double, session kWh), `energyValue` (double, lifetime), `currentList[].currentValue`,
   `voltageList[].voltageValue`, `timeConsume`, `uploadTimeStamp`.
-- **StartCharge / StopCharge** — command acks carrying `success`.
+- **StartCharge / StopCharge** — command acks carrying `success`. The integration
+  also waits for a `ChangeConfiguration` ack; its exact shape (and whether acks
+  echo the request `uniqueId`) is still unconfirmed — the ack is logged at debug
+  level (`Ack for <action> on <code>: ...`) to capture it.
 
 `Payload` is the same shape as the REST `currentMeterValue` plus `connectorStatus`,
 so the integration parses these frames directly (`_apply_payload`) for true

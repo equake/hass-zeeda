@@ -2,9 +2,14 @@
 
 Logs in, discovers the account's chargers, polls their status over REST, and
 keeps one user WebSocket per charger for push updates and control commands.
-Changing the amperage while the car is plugged in is orchestrated here
-(stop -> change -> start), because the hardware only accepts a current change
-while not actively charging.
+Changing the amperage while a session is on is orchestrated here (stop ->
+wait until really stopped -> change -> start), because the hardware only
+accepts a current change while not actively charging.
+
+The charger reports a new state seconds to ~1 min after a command, so every
+command holds its target as a *pending* value: entities show it immediately and
+stale reads that contradict it are ignored until a read confirms it or
+PENDING_STATE_TIMEOUT expires.
 """
 
 from __future__ import annotations
@@ -20,29 +25,34 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 
 from .api import (
     Session,
     ZeedaApi,
     ZeedaAuthError,
+    ZeedaCommandError,
     ZeedaConnectionError,
     ZeedaError,
 )
 from .const import (
+    ACTIVE_STATUSES,
     AUTH_BACKOFF_BASE,
     AUTH_BACKOFF_MAX,
     CONF_SCAN_INTERVAL,
     CONF_TIMEZONE,
-    CURRENT_CHANGE_PAUSE,
+    CONFIRM_REFRESH_DELAY,
+    CURRENT_CHANGE_SETTLE,
     DEFAULT_CURRENT_OPTIONS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     FULL_REFRESH_INTERVAL,
-    STATUS_CHARGING,
+    PENDING_STATE_TIMEOUT,
+    STOP_CONFIRM_POLL,
+    STOP_CONFIRM_TIMEOUT,
     TOKEN_REFRESH_MARGIN,
     WS_ACTION_OFFLINE,
     WS_ACTION_ONLINE,
@@ -105,6 +115,64 @@ class Charger:
     support_solar: bool = False
     support_load_balancing: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
+    # commanded values awaiting confirmation by a read (None = nothing pending)
+    pending_charging: bool | None = None
+    pending_charging_until: float = 0.0
+    pending_max_current: int | None = None
+    pending_max_current_until: float = 0.0
+    pending_charge_mode: str | None = None
+    pending_charge_mode_until: float = 0.0
+
+    @property
+    def charging_on(self) -> bool:
+        """Session on (charging or waiting), honouring a pending start/stop."""
+        if (
+            self.pending_charging is not None
+            and time.monotonic() < self.pending_charging_until
+        ):
+            return self.pending_charging
+        return self.status in ACTIVE_STATUSES
+
+    @property
+    def effective_max_current(self) -> int | None:
+        if (
+            self.pending_max_current is not None
+            and time.monotonic() < self.pending_max_current_until
+        ):
+            return self.pending_max_current
+        return self.max_current
+
+    @property
+    def effective_charge_mode(self) -> str | None:
+        if (
+            self.pending_charge_mode is not None
+            and time.monotonic() < self.pending_charge_mode_until
+        ):
+            return self.pending_charge_mode
+        return self.charge_mode
+
+    def reconcile(self, *, settings: bool = False) -> None:
+        """Drop pending values a read confirmed, or whose window expired.
+
+        ``settings`` is True only right after reading chargePointSetting, the
+        sole source that can confirm max current / charge mode.
+        """
+        now = time.monotonic()
+        if self.pending_charging is not None and (
+            now >= self.pending_charging_until
+            or (self.status in ACTIVE_STATUSES) == self.pending_charging
+        ):
+            self.pending_charging = None
+        if self.pending_max_current is not None and (
+            now >= self.pending_max_current_until
+            or (settings and self.max_current == self.pending_max_current)
+        ):
+            self.pending_max_current = None
+        if self.pending_charge_mode is not None and (
+            now >= self.pending_charge_mode_until
+            or (settings and self.charge_mode == self.pending_charge_mode)
+        ):
+            self.pending_charge_mode = None
 
 
 class ZeedaCoordinator:
@@ -132,6 +200,7 @@ class ZeedaCoordinator:
         self._listeners: set = set()
         self._unsub_poll = None
         self._command_lock = asyncio.Lock()
+        self._unsub_confirm: dict[str, Any] = {}
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
         self._auth_failures: int = 0
@@ -162,6 +231,9 @@ class ZeedaCoordinator:
         if self._ws_debounce:
             self._ws_debounce.cancel()
             self._ws_debounce = None
+        for unsub in self._unsub_confirm.values():
+            unsub()
+        self._unsub_confirm.clear()
         for ws in self._ws.values():
             await ws.close()
         self._ws.clear()
@@ -334,6 +406,7 @@ class ZeedaCoordinator:
         charger.voltage_v = voltages[0].get("voltageValue") if voltages else None
 
         if not full:
+            charger.reconcile()
             return
 
         # Slow-changing config/identity — only on the periodic full refresh.
@@ -349,6 +422,7 @@ class ZeedaCoordinator:
         charger.charge_mode = setting.get("chargeMode")
         max_current = setting.get("maxChargeCurrent")
         charger.max_current = int(max_current) if max_current else charger.max_current
+        charger.reconcile(settings=True)
 
     # -- listeners ------------------------------------------------------------
     @callback
@@ -456,46 +530,132 @@ class ZeedaCoordinator:
             applied = True
         if applied:
             charger.raw["push"] = {"action": action, "payload": payload}
+            charger.reconcile()
         return applied
 
     # -- control --------------------------------------------------------------
-    async def start_charge(self, code: str) -> None:
-        async with self._command_lock:
+    @callback
+    def _schedule_confirm_refresh(self, code: str, *, full: bool) -> None:
+        """Re-read state a little after a command, in case no push confirms it."""
+        if unsub := self._unsub_confirm.pop(code, None):
+            unsub()
+
+        async def _refresh(_now) -> None:
+            self._unsub_confirm.pop(code, None)
+            await self.async_refresh(full=full)
+
+        self._unsub_confirm[code] = async_call_later(
+            self.hass, CONFIRM_REFRESH_DELAY, _refresh
+        )
+
+    async def _send(self, code: str, command: str, *args: Any) -> dict | None:
+        """Send a WS command and wait for its ack, mapping failures for the UI."""
+        try:
             ws = await self._get_ws(code)
-            await ws.start_charge()
-        await self.async_refresh()
+            return await getattr(ws, command)(*args)
+        except ZeedaCommandError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_rejected",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+    @callback
+    def _set_pending_charging(self, charger: Charger, on: bool) -> None:
+        charger.pending_charging = on
+        charger.pending_charging_until = time.monotonic() + PENDING_STATE_TIMEOUT
+
+    async def start_charge(self, code: str) -> None:
+        charger = self.chargers[code]
+        async with self._command_lock:
+            await self._send(code, "start_charge")
+            self._set_pending_charging(charger, True)
+        self._notify()
+        self._schedule_confirm_refresh(code, full=False)
 
     async def stop_charge(self, code: str) -> None:
+        charger = self.chargers[code]
         async with self._command_lock:
-            ws = await self._get_ws(code)
-            await ws.stop_charge()
-        await self.async_refresh()
+            await self._send(code, "stop_charge")
+            self._set_pending_charging(charger, False)
+        self._notify()
+        self._schedule_confirm_refresh(code, full=False)
 
     async def set_charge_mode(self, code: str, mode_value: str) -> None:
+        charger = self.chargers[code]
         async with self._command_lock:
-            ws = await self._get_ws(code)
-            await ws.set_charge_mode(mode_value)
-        await self.async_refresh(full=True)
+            ack = await self._send(code, "set_charge_mode", mode_value)
+            if ack is not None:
+                charger.charge_mode = mode_value
+            charger.pending_charge_mode = mode_value
+            charger.pending_charge_mode_until = time.monotonic() + PENDING_STATE_TIMEOUT
+        self._notify()
+        self._schedule_confirm_refresh(code, full=True)
+
+    async def _wait_until_stopped(self, code: str, charger: Charger) -> bool:
+        """Wait until the charger reports the session stopped (push or REST)."""
+        deadline = time.monotonic() + STOP_CONFIRM_TIMEOUT
+        next_poll = time.monotonic() + STOP_CONFIRM_POLL
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            if charger.status not in ACTIVE_STATUSES:
+                return True
+            if time.monotonic() >= next_poll:
+                next_poll = time.monotonic() + STOP_CONFIRM_POLL
+                try:
+                    await self._refresh_one(code, charger, full=False)
+                except (ZeedaError, aiohttp.ClientError, TimeoutError, ValueError):
+                    continue
+                if charger.status not in ACTIVE_STATUSES:
+                    return True
+        return False
 
     async def set_max_current(self, code: str, amps: int) -> None:
-        """Set amperage, pausing/resuming the session if it is actively charging.
+        """Set amperage, pausing/resuming the session only if it was on.
 
-        The charger only accepts a current change while not charging, so when a
-        session is running we stop it, apply the new current, then start again —
-        giving dynamic power control with the car plugged in.
+        The charger rejects a current change while charging, so when a session
+        is on we stop it, wait until it really reports stopped, apply the new
+        current, then start again. If it was off, only the current is changed.
         """
         charger = self.chargers[code]
         snapped = _snap_current(charger.current_options, amps)
         if snapped != amps:
             _LOGGER.debug("Snapping %s A to selectable %s A for %s", amps, snapped, code)
         async with self._command_lock:
-            ws = await self._get_ws(code)
-            was_charging = charger.status == STATUS_CHARGING
-            if was_charging:
-                await ws.stop_charge()
-                await asyncio.sleep(CURRENT_CHANGE_PAUSE)
-            await ws.set_max_current(snapped)
-            if was_charging:
-                await asyncio.sleep(CURRENT_CHANGE_PAUSE)
-                await ws.start_charge()
-        await self.async_refresh(full=True)
+            was_on = charger.charging_on
+            if was_on:
+                await self._send(code, "stop_charge")
+                if not await self._wait_until_stopped(code, charger):
+                    # Don't leave the car stuck without charging.
+                    await self._send(code, "start_charge")
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="stop_not_confirmed",
+                    )
+            change_error: HomeAssistantError | None = None
+            ack = None
+            try:
+                ack = await self._send(code, "set_max_current", snapped)
+            except HomeAssistantError as err:
+                change_error = err
+            if was_on:
+                await asyncio.sleep(CURRENT_CHANGE_SETTLE)
+                await self._send(code, "start_charge")
+                self._set_pending_charging(charger, True)
+            if change_error is None:
+                if ack is not None:
+                    charger.max_current = snapped
+                charger.pending_max_current = snapped
+                charger.pending_max_current_until = (
+                    time.monotonic() + PENDING_STATE_TIMEOUT
+                )
+        self._notify()
+        self._schedule_confirm_refresh(code, full=True)
+        if change_error is not None:
+            raise change_error

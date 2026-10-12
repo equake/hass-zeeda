@@ -9,7 +9,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ZeedaConfigEntry
-from .const import STATUS_CHARGING, STATUS_WAITING
 from .coordinator import ZeedaCoordinator
 from .entity import ZeedaEntity
 
@@ -39,8 +38,9 @@ class ZeedaChargeSwitch(ZeedaEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        # "On" while a session is active: charging or waiting/suspended.
-        return self._charger.status in ({STATUS_CHARGING} | STATUS_WAITING)
+        # "On" while a session is active (charging or waiting/suspended), or
+        # right after a start/stop until the charger confirms it.
+        return self._charger.charging_on
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self._coordinator.start_charge(self._code)
