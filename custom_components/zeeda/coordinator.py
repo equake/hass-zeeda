@@ -34,6 +34,7 @@ from .const import (
     DOMAIN,
     FULL_REFRESH_INTERVAL,
     STATUS_CHARGING,
+    TOKEN_REFRESH_MARGIN,
     WS_DEBOUNCE,
 )
 from .ws import ZeedaWebSocket
@@ -95,8 +96,13 @@ class ZeedaCoordinator:
         )
 
         self._language = "en"
-        self._api = ZeedaApi(async_get_clientsession(hass), self._language)
+        self._api = ZeedaApi(
+            async_get_clientsession(hass),
+            self._language,
+            on_token_updated=self._on_token_updated,
+        )
         self._session: Session | None = None
+        self._token_expires_at: float | None = None
         self._ws: dict[str, ZeedaWebSocket] = {}
         self._listeners: set = set()
         self._unsub_poll = None
@@ -140,11 +146,33 @@ class ZeedaCoordinator:
             )
         except ZeedaAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
+        self._token_expires_at = (
+            time.monotonic() + self._session.expire_time
+            if self._session.expire_time > 0
+            else None
+        )
         # The new token invalidates existing sockets (they were built with the old
         # one). Drop them so the next refresh/command reconnects with the fresh token.
-        for ws in self._ws.values():
-            await ws.close()
+        await self._close_websockets()
+
+    @callback
+    def _on_token_updated(self, token: str) -> None:
+        """Adopt a token rotated by the REST API and replace authenticated sockets."""
+        if self._session is None:
+            return
+        self._session.token = token
+        self._token_expires_at = (
+            time.monotonic() + self._session.expire_time
+            if self._session.expire_time > 0
+            else None
+        )
+        self.hass.async_create_task(self._close_websockets())
+
+    async def _close_websockets(self) -> None:
+        websockets = list(self._ws.values())
         self._ws.clear()
+        for ws in websockets:
+            await ws.close()
 
     async def _discover(self) -> None:
         assert self._session is not None
@@ -179,16 +207,31 @@ class ZeedaCoordinator:
 
     # -- polling --------------------------------------------------------------
     async def _scheduled_refresh(self, _now) -> None:
-        # Keep the real-time WebSocket alive; reconnect if it dropped.
-        for code in self.chargers:
-            ws = self._ws.get(code)
-            if ws is None or not ws.connected:
+        try:
+            if (
+                self._token_expires_at is not None
+                and time.monotonic()
+                >= self._token_expires_at - TOKEN_REFRESH_MARGIN
+            ):
                 try:
-                    await self._get_ws(code)
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug("WS reconnect failed for %s: %s", code, err)
-        full = (time.monotonic() - self._last_full) >= FULL_REFRESH_INTERVAL
-        await self.async_refresh(full=full)
+                    await self._login()
+                except ZeedaError as err:
+                    _LOGGER.debug("Proactive Zeeda token refresh failed: %s", err)
+
+            # Keep the real-time WebSocket alive; reconnect if it dropped.
+            for code in self.chargers:
+                ws = self._ws.get(code)
+                if ws is None or not ws.connected:
+                    try:
+                        await self._get_ws(code)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.debug("WS reconnect failed for %s: %s", code, err)
+            full = (time.monotonic() - self._last_full) >= FULL_REFRESH_INTERVAL
+            await self.async_refresh(full=full)
+        except ConfigEntryAuthFailed:
+            self.connected = False
+            self._notify()
+            self.entry.async_start_reauth(self.hass)
 
     async def async_refresh(self, *, full: bool = False) -> None:
         any_ok = False
