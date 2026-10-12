@@ -48,7 +48,7 @@ class ZeedaCurrentNumber(ZeedaEntity, NumberEntity):
 
     @property
     def available(self) -> bool:
-        return self._coordinator.connected and self._charger.online
+        return self._charger.reachable and self._charger.online
 
     @property
     def native_value(self) -> float | None:
