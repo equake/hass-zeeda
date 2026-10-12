@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
+import pytest
+
+from custom_components.zeeda.const import WS_ACTION_OFFLINE, WS_ACTION_ONLINE
 from custom_components.zeeda.coordinator import Charger, ZeedaCoordinator
 
 
@@ -51,3 +56,35 @@ def test_ignore_payload_without_supported_fields() -> None:
 
     assert not coordinator._apply_payload(charger, "Unknown", {"message": "ignored"})
     assert charger.raw == {}
+
+
+@pytest.mark.parametrize(
+    ("action", "initial_online", "expected_online"),
+    (
+        (WS_ACTION_ONLINE, False, True),
+        (WS_ACTION_OFFLINE, True, False),
+    ),
+)
+def test_online_offline_push_updates_connectivity_immediately(
+    action: str, initial_online: bool, expected_online: bool
+) -> None:
+    coordinator = object.__new__(ZeedaCoordinator)
+    charger = Charger(
+        code="Z123",
+        name="Garage",
+        charge_point_id=1,
+        online=initial_online,
+    )
+    coordinator.chargers = {charger.code: charger}
+    coordinator.connected = False
+    coordinator._notify = Mock()
+    coordinator._ws_debounce = None
+    coordinator.hass = Mock()
+
+    coordinator._on_ws_push(charger.code, {"action": action})
+
+    assert charger.reachable is True
+    assert charger.online is expected_online
+    assert coordinator.connected is True
+    coordinator._notify.assert_called_once_with()
+    coordinator.hass.loop.call_later.assert_not_called()
