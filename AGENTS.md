@@ -88,11 +88,30 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
   → `HomeAssistantError` (translated, `exceptions` in `strings.json`). No ack in
   `COMMAND_ACK_TIMEOUT` = unconfirmed, not an error.
 - **Pending state:** the charger reports a new state seconds to ~1 min after a
-  command. A confirmed command sets a pending value on the `Charger`
-  (`charging_on`, `effective_max_current`, `effective_charge_mode`) shown
-  immediately; stale reads that contradict it are ignored until a read confirms
-  it (`Charger.reconcile`) or `PENDING_STATE_TIMEOUT` expires. Never refresh right
+  command. A start/stop sets `pending_charging` on the `Charger` (`charging_on`)
+  shown immediately; stale reads that contradict it are ignored until a read
+  confirms it (`Charger.reconcile`). If `PENDING_STATE_TIMEOUT` expires first,
+  a timer drops it and reports it (`_fire_unconfirmed`). Never refresh right
   after a command — schedule a confirm refresh (`CONFIRM_REFRESH_DELAY`) instead.
+- **Setting confirmation:** current and charge-mode changes show the target
+  during the operation, then poll `chargePointSetting` (`_confirm_setting`, up
+  to `SETTING_CONFIRM_TIMEOUT`); if it never reports the new value the action
+  raises `current_not_applied` / `charge_mode_not_applied` and the entity
+  reverts.
+- **Current entities:** `select` "Charging current" (only `currentList` values,
+  `ServiceValidationError` otherwise) is the primary control; the `number`
+  (snapped, `entity_registry_enabled_default = False`) stays for automations.
+
+## Error reporting
+
+- Failed actions → translated `HomeAssistantError` (`exceptions` in `strings.json`).
+- Unconfirmed commands → `_LOGGER.warning` + `zeeda_command_unconfirmed` event
+  (`device_id`, `charger`, `name`, `command`, optional `value`/`timeout`).
+- Charger offline (cloud reachable, `online` false) for `OFFLINE_ISSUE_DELAY` →
+  non-fixable repair issue `charger_offline_<code>`, deleted when it returns.
+  Cloud outages do **not** raise an issue (not user-fixable).
+- Availability transitions are logged once at info (`_track_availability`,
+  run from `_notify`).
 
 ## Coding Conventions
 

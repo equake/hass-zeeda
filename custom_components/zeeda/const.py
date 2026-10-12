@@ -114,6 +114,18 @@ CURRENT_CHANGE_SETTLE = 2  # seconds between the current change and StartCharge
 # Re-read state this long after a command, in case no push frame confirms it.
 CONFIRM_REFRESH_DELAY = 20  # seconds
 
+# A current / charge-mode change only completes once chargePointSetting reports
+# the new value; poll it (every STOP_CONFIRM_POLL) for up to this long.
+SETTING_CONFIRM_TIMEOUT = 20  # seconds
+
+# Fired when the charger never confirmed a command (see AGENTS.md).
+EVENT_COMMAND_UNCONFIRMED = f"{DOMAIN}_command_unconfirmed"
+
+# Raise a repair issue once a charger has been offline (cloud reachable, but
+# the charger itself disconnected) for this long; cleared when it returns.
+OFFLINE_ISSUE_DELAY = 900  # seconds
+ISSUE_CHARGER_OFFLINE = "charger_offline"
+
 # Login token lifetime is 7 days (expireTime=604800); refresh well before that.
 TOKEN_REFRESH_MARGIN = 3600  # seconds before expiry to re-login
 

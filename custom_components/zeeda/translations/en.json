@@ -77,7 +77,7 @@
       "charge": { "name": "Charging" }
     },
     "number": {
-      "max_current": { "name": "Charging current" }
+      "max_current": { "name": "Charging current (slider)" }
     },
     "select": {
       "charge_mode": {
@@ -87,13 +87,23 @@
           "plug_and_charge": "Plug and charge",
           "reservation": "Scheduled"
         }
-      }
+      },
+      "max_current": { "name": "Charging current" }
     }
   },
   "exceptions": {
     "command_failed": { "message": "Could not send the command to the charger: {error}" },
     "command_rejected": { "message": "The charger rejected the command: {error}" },
     "invalid_charge_mode": { "message": "Unknown charging mode: {option}" },
-    "stop_not_confirmed": { "message": "The charger did not stop charging in time, so the charging current was not changed." }
+    "stop_not_confirmed": { "message": "The charger did not stop charging in time, so the charging current was not changed." },
+    "current_not_applied": { "message": "The charger did not apply {amps} A. The charging current was not changed." },
+    "charge_mode_not_applied": { "message": "The charger did not apply the new charging mode." },
+    "invalid_current": { "message": "{option} is not a charging current this charger accepts. Choose one of: {options}." }
+  },
+  "issues": {
+    "charger_offline": {
+      "title": "{name} is offline",
+      "description": "The Zeeda charger {name} has not been connected to the Zeeda cloud for more than {minutes} minutes, so it cannot be monitored or controlled. Check that it has power and is connected to Wi-Fi. This message disappears on its own when the charger reconnects."
+    }
   }
 }
