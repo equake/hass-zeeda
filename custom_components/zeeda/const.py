@@ -45,10 +45,9 @@ WS_ACTION_CHANGE_CONFIG = "ChangeConfiguration"
 ATTR_MAX_CURRENT = "MaxChargeCurrent"
 ATTR_CHARGE_MODE = "ChargeMode"
 
-# ChargeMode values (from the app). "Authorized-Charge" and "CycleReservation-Charge"
-# are confirmed; the plug-and-charge value is a best guess pending live confirmation.
+# ChargeMode values (confirmed against the live API).
 MODE_AUTHORIZED = "Authorized-Charge"  # start/stop via app or RFID card
-MODE_PLUG_AND_CHARGE = "Plug-and-Charge"  # TODO: confirm exact value against live API
+MODE_PLUG_AND_CHARGE = "Plug-and-Charge"  # plug in and charge automatically
 MODE_RESERVATION = "CycleReservation-Charge"  # scheduled charging
 
 CHARGE_MODES = {
