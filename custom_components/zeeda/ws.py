@@ -21,6 +21,7 @@ import aiohttp
 from .const import (
     ATTR_CHARGE_MODE,
     ATTR_MAX_CURRENT,
+    RECONNECT_DELAY,
     USER_AGENT,
     WS_ACTION_CHANGE_CONFIG,
     WS_ACTION_START,
@@ -39,7 +40,12 @@ def ws_url(base_url: str, device_code: str) -> str:
 
 
 class ZeedaWebSocket:
-    """One persistent user-channel WebSocket for a single charger."""
+    """One persistent user-channel WebSocket for a single charger.
+
+    When the socket drops on its own, it reconnects in the background (first
+    attempt immediately, then every ``RECONNECT_DELAY`` seconds); ``close()``
+    is the intentional shutdown and never reconnects.
+    """
 
     def __init__(
         self,
@@ -63,7 +69,8 @@ class ZeedaWebSocket:
 
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._reader: asyncio.Task | None = None
-        self._heartbeat: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._closing = False
         self._lock = asyncio.Lock()
 
     @property
@@ -83,15 +90,18 @@ class ZeedaWebSocket:
             self._ws = await self._http.ws_connect(
                 self._url, headers=headers, heartbeat=WS_HEARTBEAT
             )
+            if self._reader is not None and not self._reader.done():
+                self._reader.cancel()
             self._reader = asyncio.create_task(self._read_loop())
             _LOGGER.debug("WS connected: %s", self._url)
 
     async def close(self) -> None:
         async with self._lock:
-            for task in (self._reader, self._heartbeat):
+            self._closing = True
+            for task in (self._reader, self._reconnect_task):
                 if task:
                     task.cancel()
-            self._reader = self._heartbeat = None
+            self._reader = self._reconnect_task = None
             if self._ws is not None:
                 await self._ws.close()
                 self._ws = None
@@ -108,6 +118,30 @@ class ZeedaWebSocket:
             raise
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("WS read loop ended for %s: %s", self._device_code, err)
+        # Reached only when the socket dropped on its own (a cancellation
+        # re-raises above) -> reconnect in the background.
+        self._schedule_reconnect()
+
+    def _schedule_reconnect(self) -> None:
+        """Start the reconnect loop unless closing or one is already running."""
+        if self._closing:
+            return
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    async def _reconnect(self) -> None:
+        """Reconnect immediately, retrying every ``RECONNECT_DELAY`` seconds."""
+        while not self._closing and not self.connected:
+            try:
+                await self.connect()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "WS reconnect failed for %s: %s; retrying in %ss",
+                    self._device_code,
+                    err,
+                    RECONNECT_DELAY,
+                )
+                await asyncio.sleep(RECONNECT_DELAY)
 
     def _dispatch(self, raw: str) -> None:
         try:

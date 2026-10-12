@@ -114,4 +114,6 @@ WS_ACTION_ONLINE = "Online"
 WS_ACTION_OFFLINE = "Offline"
 
 WS_HEARTBEAT = 30  # seconds (matches the app)
+# Seconds between WebSocket reconnect retries after the socket drops. Sockets
+# reconnect themselves; the scheduled REST poll is a separate safety net.
 RECONNECT_DELAY = 30  # seconds

@@ -262,7 +262,9 @@ class ZeedaCoordinator:
                 except ZeedaError as err:
                     _LOGGER.debug("Proactive Zeeda token refresh failed: %s", err)
 
-            # Keep the real-time WebSocket alive; reconnect if it dropped.
+            # Safety net for the real-time WebSocket: sockets reconnect
+            # themselves with RECONNECT_DELAY retries, but re-check here in
+            # case a reconnect loop died.
             for code in self.chargers:
                 ws = self._ws.get(code)
                 if ws is None or not ws.connected:

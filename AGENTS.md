@@ -36,7 +36,9 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 - **Config entry** = one Zeeda account; `type ZeedaConfigEntry = ConfigEntry[ZeedaCoordinator]`.
 - Each charger (keyed by `chargePointCode`) becomes one HA device.
 - **Hybrid data flow** (efficiency):
-  - The **WebSocket** is the primary real-time source. Push frames are parsed in
+  - The **WebSocket** is the primary real-time source (it reconnects itself,
+    `RECONNECT_DELAY`; the scheduled REST poll is a second safety net). Push
+    frames are parsed in
     place (`_apply_payload`): `StatusNotification` → `connectorStatus`,
     `MeterValues` → power/energy/current/voltage/duration. Only command acks
     (`StartCharge`/`StopCharge`) and unknown frames fall back to a debounced REST
