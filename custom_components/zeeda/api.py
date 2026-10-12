@@ -42,6 +42,10 @@ class ZeedaError(Exception):
     """Base error for the Zeeda API."""
 
 
+class ZeedaConnectionError(ZeedaError):
+    """The Zeeda server could not be reached or returned an invalid response."""
+
+
 class ZeedaAuthError(ZeedaError):
     """Login rejected (wrong credentials, or account on another server)."""
 
@@ -96,14 +100,18 @@ class ZeedaApi:
         if self.token:
             headers["Authorization"] = self.token
         body = {"accessType": "android", "data": data}
-        async with self._http.post(
-            url, json=body, headers=headers, timeout=_TIMEOUT
-        ) as resp:
-            # The app also captures a token refreshed via the Authorization header.
-            auth = resp.headers.get("Authorization")
-            if auth:
-                self.token = auth
-            payload = await resp.json(content_type=None)
+        try:
+            async with self._http.post(
+                url, json=body, headers=headers, timeout=_TIMEOUT
+            ) as resp:
+                resp.raise_for_status()
+                # The app also captures a token refreshed via the Authorization header.
+                auth = resp.headers.get("Authorization")
+                if auth:
+                    self.token = auth
+                payload = await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise ZeedaConnectionError(f"Request to {path} failed: {err}") from err
         if not isinstance(payload, dict):
             return payload
         if payload.get("success"):
