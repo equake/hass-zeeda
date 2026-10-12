@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
+from .api import ZeedaError
 from .const import CONFIG_ENTRY_VERSION
 from .coordinator import ZeedaCoordinator
 
@@ -26,7 +29,14 @@ PLATFORMS = [
 
 async def async_setup_entry(hass: HomeAssistant, entry: ZeedaConfigEntry) -> bool:
     coordinator = ZeedaCoordinator(hass, entry)
-    await coordinator.async_setup()
+    try:
+        await coordinator.async_setup()
+    except ConfigEntryAuthFailed:
+        raise
+    except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
+        # A cloud hiccup at boot is transient: let HA retry with backoff instead
+        # of parking the entry in SETUP_ERROR (which needs a manual reload).
+        raise ConfigEntryNotReady(f"Could not reach the Zeeda cloud: {err}") from err
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
