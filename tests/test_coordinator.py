@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.zeeda.api import ZeedaAuthError
 from custom_components.zeeda.const import WS_ACTION_OFFLINE, WS_ACTION_ONLINE
 from custom_components.zeeda.coordinator import (
     Charger,
@@ -173,3 +174,51 @@ def test_to_float_rejects_unusable_values() -> None:
     assert _to_float("") is None
     assert _to_float(None) is None
     assert _to_float("7.2") == 7.2
+
+
+def _runtime_auth_coordinator() -> tuple[ZeedaCoordinator, Charger]:
+    """A coordinator whose API rejects both reads and the re-login."""
+    coordinator = object.__new__(ZeedaCoordinator)
+    coordinator.entry = Mock()
+    coordinator.hass = None
+    coordinator._account = "user@example.com"
+    coordinator._password = "secret"
+    coordinator._timezone = "America/Sao_Paulo"
+    coordinator._api = Mock()
+    coordinator._api.get_status_info = AsyncMock(side_effect=ZeedaAuthError("expired"))
+    coordinator._api.login = AsyncMock(side_effect=ZeedaAuthError("bad credentials"))
+    coordinator._session = None
+    coordinator._ws = {}
+    coordinator._listeners = set()
+    coordinator.connected = True
+    coordinator._auth_failures = 0
+    coordinator._auth_cooldown_until = 0.0
+    coordinator._reauth_warned = False
+    charger = Charger(code="Z123", name="Garage", charge_point_id=1)
+    coordinator.chargers = {"Z123": charger}
+    return coordinator, charger
+
+
+@pytest.mark.asyncio
+async def test_refresh_starts_reauth_when_runtime_login_rejected() -> None:
+    coordinator, charger = _runtime_auth_coordinator()
+
+    # Must not raise: the debounced WS refresh calls this fire-and-forget.
+    await coordinator.async_refresh()
+
+    assert coordinator.connected is False
+    assert charger.reachable is False
+    coordinator.entry.async_start_reauth.assert_called_once_with(None)
+    assert coordinator._auth_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_stays_quiet_while_login_backs_off() -> None:
+    coordinator, _ = _runtime_auth_coordinator()
+
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+
+    # Still exactly one reauth trigger: the second attempt hit the backoff.
+    coordinator.entry.async_start_reauth.assert_called_once_with(None)
+    assert coordinator._auth_failures == 1

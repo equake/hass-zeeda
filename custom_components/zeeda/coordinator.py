@@ -210,6 +210,7 @@ class ZeedaCoordinator:
         self._ws_debounce: asyncio.TimerHandle | None = None
         self._auth_failures: int = 0
         self._auth_cooldown_until: float = 0.0
+        self._reauth_warned: bool = False
 
         self.chargers: dict[str, Charger] = {}
         self.connected: bool = False
@@ -275,6 +276,22 @@ class ZeedaCoordinator:
             raise
         self._auth_failures = 0
         self._auth_cooldown_until = 0.0
+
+    @callback
+    def _start_reauth(self) -> None:
+        """Trigger the reauth flow when credentials are rejected at runtime.
+
+        Home Assistant ignores the call while a reauth/reconfigure flow is
+        already in progress, so this is safe to repeat; the warning fires once
+        per coordinator lifetime (a successful reauth reloads the entry).
+        """
+        if not self._reauth_warned:
+            self._reauth_warned = True
+            _LOGGER.warning(
+                "Zeeda login for %s was rejected; re-authentication required",
+                self._account,
+            )
+        self.entry.async_start_reauth(self.hass)
 
     @callback
     def _on_token_updated(self, token: str) -> None:
@@ -354,7 +371,7 @@ class ZeedaCoordinator:
         except ConfigEntryAuthFailed:
             self.connected = False
             self._notify()
-            self.entry.async_start_reauth(self.hass)
+            self._start_reauth()
 
     async def async_refresh(self, *, full: bool = False) -> None:
         any_ok = False
@@ -385,6 +402,11 @@ class ZeedaCoordinator:
                 charger.reachable = False
             try:
                 await self._attempt_login()
+            except ConfigEntryAuthFailed:
+                # Credentials rejected at runtime: guide the user to re-auth
+                # instead of letting the exception escape into the debounced
+                # WS refresh task or service calls.
+                self._start_reauth()
             except ZeedaConnectionError:
                 pass  # backing off after a failed login; don't hammer
         self._notify()
