@@ -5,10 +5,11 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ZeedaConfigEntry
-from .const import CHARGE_MODE_BY_SLUG, CHARGE_MODES
+from .const import CHARGE_MODE_BY_SLUG, CHARGE_MODES, DOMAIN
 from .coordinator import ZeedaCoordinator
 from .entity import ZeedaEntity
 
@@ -37,14 +38,15 @@ class ZeedaChargeModeSelect(ZeedaEntity, SelectEntity):
         self._attr_options = list(CHARGE_MODES.values())
 
     @property
-    def available(self) -> bool:
-        return self._charger.reachable and self._charger.online
-
-    @property
     def current_option(self) -> str | None:
         return CHARGE_MODES.get(self._charger.effective_charge_mode)
 
     async def async_select_option(self, option: str) -> None:
         value = CHARGE_MODE_BY_SLUG.get(option)
-        if value:
-            await self._coordinator.set_charge_mode(self._code, value)
+        if value is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_charge_mode",
+                translation_placeholders={"option": option},
+            )
+        await self._coordinator.set_charge_mode(self._code, value)

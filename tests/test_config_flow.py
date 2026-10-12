@@ -22,7 +22,6 @@ async def test_user_flow_creates_entry(hass) -> None:
         "username": "user@example.com",
         "password": "secret",
         CONF_TIMEZONE: "America/Sao_Paulo",
-        "user_id": 123,
     }
 
     with patch(

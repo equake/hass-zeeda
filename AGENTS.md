@@ -34,6 +34,8 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
 
 - `custom_components/zeeda/` — integration code
 - `api.py` — REST client + AES password encryption + server resolution
+  (AES uses `cryptography`, which ships with Home Assistant core — do **not**
+  list it in `manifest.json` `requirements`, hassfest rejects core deps there)
 - `ws.py` — user WebSocket: push frames + control commands
 - `coordinator.py` — auth, discovery, hybrid refresh, control orchestration
 - `entity.py` — `ZeedaEntity` base (one entity ↔ one charger)
@@ -59,6 +61,9 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
   - `currentList` (selectable amps) is static → fetched once at discovery.
     `getChargingDuration` is redundant with `status.currentMeterValue.timeConsume`
     → not polled.
+  - Refresh stays **sequential** (per charger and per endpoint) on purpose: the
+    calls are already infrequent and parallelising them risks rate-limiting the
+    cloud. Do not "optimise" this with `asyncio.gather`.
 - All platforms use `entry.runtime_data`, never `hass.data`.
 - `_attr_has_entity_name = True` on every entity.
 
@@ -111,7 +116,7 @@ ruff check custom_components/
 
 ## Open items / TODO
 
-- Confirm `StartCharge`/`StopCharge`/`ChangeConfiguration` against the physical charger,
-  and record the exact ack frame shape (does it echo `uniqueId`?) in `docs/PROTOCOL.md`.
+- Confirm `StartCharge`/`StopCharge` against the physical charger, and record the
+  exact ack frame shape (does it echo `uniqueId`?) in `docs/PROTOCOL.md`. The
+  `ChangeConfiguration` values (ChargeMode/current) were confirmed live.
 - Consider mapping `connectorStatus` finer and exposing reservation times.
-- Add a pytest suite (encrypt vector, payload parsing, config flow) and the CI job.

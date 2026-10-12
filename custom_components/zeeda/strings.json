@@ -93,6 +93,7 @@
   "exceptions": {
     "command_failed": { "message": "Could not send the command to the charger: {error}" },
     "command_rejected": { "message": "The charger rejected the command: {error}" },
+    "invalid_charge_mode": { "message": "Unknown charging mode: {option}" },
     "stop_not_confirmed": { "message": "The charger did not stop charging in time, so the charging current was not changed." }
   }
 }
