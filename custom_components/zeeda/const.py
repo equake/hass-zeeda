@@ -126,6 +126,9 @@ EVENT_COMMAND_UNCONFIRMED = f"{DOMAIN}_command_unconfirmed"
 OFFLINE_ISSUE_DELAY = 900  # seconds
 ISSUE_CHARGER_OFFLINE = "charger_offline"
 
+# The account has no chargers at all -> nothing to monitor or control.
+ISSUE_NO_CHARGERS = "no_chargers"
+
 # Login token lifetime is 7 days (expireTime=604800); refresh well before that.
 TOKEN_REFRESH_MARGIN = 3600  # seconds before expiry to re-login
 

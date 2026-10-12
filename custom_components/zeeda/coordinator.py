@@ -53,6 +53,7 @@ from .const import (
     EVENT_COMMAND_UNCONFIRMED,
     FULL_REFRESH_INTERVAL,
     ISSUE_CHARGER_OFFLINE,
+    ISSUE_NO_CHARGERS,
     OFFLINE_ISSUE_DELAY,
     PENDING_STATE_TIMEOUT,
     SETTING_CONFIRM_TIMEOUT,
@@ -216,6 +217,7 @@ class ZeedaCoordinator:
         self._available: dict[str, bool] = {}
         self._offline_since: dict[str, float] = {}
         self._offline_issues: set[str] = set()
+        self._no_chargers_issue = False
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
         self._auth_failures: int = 0
@@ -254,6 +256,9 @@ class ZeedaCoordinator:
         for code in self._offline_issues:
             ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_CHARGER_OFFLINE}_{code}")
         self._offline_issues.clear()
+        if self._no_chargers_issue:
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_NO_CHARGERS)
+            self._no_chargers_issue = False
         for ws in self._ws.values():
             await ws.close()
         self._ws.clear()
@@ -326,20 +331,35 @@ class ZeedaCoordinator:
         for ws in websockets:
             await ws.close()
 
-    async def _discover(self) -> None:
+    async def _discover(self) -> bool:
+        """Reconcile the account's chargers; returns True when the set changed.
+
+        Called at setup and on every full refresh, so a charger added or removed
+        in the Zeeda app shows up without a manual reload.
+        """
         assert self._session is not None
         items = await self._api.get_user_charge(
             self._session.user_id, self._session.org_id
         )
+        previous = set(self.chargers)
+        codes: set[str] = set()
         for item in items:
             vo = item.get("chargePointVO") or {}
             code = vo.get("chargePointCode")
             if not code:
                 continue
+            codes.add(code)
+            name = item.get("chargePointName") or code
+            existing = self.chargers.get(code)
+            if existing is not None:
+                existing.name = name
+                existing.model = vo.get("chargePointTypeModel") or existing.model
+                existing.firmware = vo.get("firmwareVersion") or existing.firmware
+                continue
             connectors = vo.get("connectorStatus") or [{}]
             charger = Charger(
                 code=code,
-                name=item.get("chargePointName") or code,
+                name=name,
                 charge_point_id=int(vo.get("id") or item.get("chargePointId") or 0),
                 connector_id=int(connectors[0].get("connectorId", 1)),
                 model=vo.get("chargePointTypeModel"),
@@ -354,8 +374,32 @@ class ZeedaCoordinator:
             except ZeedaError:
                 pass
             self.chargers[code] = charger
-        if not self.chargers:
-            _LOGGER.warning("Zeeda account %s has no chargers", self._account)
+
+        removed = set(self.chargers) - codes
+        for code in removed:
+            del self.chargers[code]
+            self._available.pop(code, None)
+            self._offline_since.pop(code, None)
+        self._set_no_chargers_issue(not self.chargers)
+        return codes != previous
+
+    @callback
+    def _set_no_chargers_issue(self, missing: bool) -> None:
+        if missing == self._no_chargers_issue:
+            return
+        self._no_chargers_issue = missing
+        if missing:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                ISSUE_NO_CHARGERS,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_NO_CHARGERS,
+                translation_placeholders={"account": self._account},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_NO_CHARGERS)
 
     # -- polling --------------------------------------------------------------
     async def _scheduled_refresh(self, _now) -> None:
@@ -381,11 +425,32 @@ class ZeedaCoordinator:
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.debug("WS reconnect failed for %s: %s", code, err)
             full = (time.monotonic() - self._last_full) >= FULL_REFRESH_INTERVAL
+            if full and await self._reconcile_chargers():
+                return
             await self.async_refresh(full=full)
         except ConfigEntryAuthFailed:
             self.connected = False
             self._notify()
             self._start_reauth()
+
+    async def _reconcile_chargers(self) -> bool:
+        """Re-discover the account's chargers; reload if the set changed."""
+        try:
+            changed = await self._discover()
+        except (ZeedaError, aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("Zeeda charger re-discovery failed: %s", err)
+            return False
+        if not changed:
+            return False
+        # Chargers were added or removed in the Zeeda app: reload so the device
+        # and entity set matches instead of keeping stale ones (or missing new
+        # ones) until the user reloads by hand.
+        _LOGGER.info(
+            "Zeeda account %s charger list changed; reloading the entry",
+            self._account,
+        )
+        self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+        return True
 
     async def async_refresh(self, *, full: bool = False) -> None:
         any_ok = False
