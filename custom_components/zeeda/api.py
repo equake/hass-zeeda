@@ -11,6 +11,7 @@ object for some endpoints and a bare string for others — see each method.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -80,9 +81,15 @@ class Session:
 class ZeedaApi:
     """Stateless-ish REST client; holds the resolved server + token."""
 
-    def __init__(self, session: aiohttp.ClientSession, language: str = "en") -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        language: str = "en",
+        on_token_updated: Callable[[str], None] | None = None,
+    ) -> None:
         self._http = session
         self._language = language
+        self._on_token_updated = on_token_updated
         self.base_url: str | None = None
         self.token: str | None = None
 
@@ -107,8 +114,11 @@ class ZeedaApi:
                 resp.raise_for_status()
                 # The app also captures a token refreshed via the Authorization header.
                 auth = resp.headers.get("Authorization")
-                if auth:
+                if auth and auth != self.token:
+                    previous_token = self.token
                     self.token = auth
+                    if previous_token is not None and self._on_token_updated:
+                        self._on_token_updated(auth)
                 payload = await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             raise ZeedaConnectionError(f"Request to {path} failed: {err}") from err
