@@ -1,0 +1,87 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zeeda EV Charger",
+        "description": "Sign in with your ZEEDA app account (email and password). The integration finds the right regional server for you automatically.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Zeeda",
+        "description": "The sign-in for {email} is no longer valid. Enter the password again.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the Zeeda servers.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This account is already set up.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Zeeda options",
+        "data": {
+          "scan_interval": "Status poll interval (fallback to the real-time connection)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "standby": "Standby",
+          "connected": "Plugged in",
+          "charging": "Charging",
+          "waiting": "Waiting to charge",
+          "finished": "Finished",
+          "scheduled": "Scheduled",
+          "fault": "Fault",
+          "online": "Online",
+          "offline": "Offline",
+          "unknown": "Unknown"
+        }
+      },
+      "power": { "name": "Charging power" },
+      "session_energy": { "name": "Session energy" },
+      "current": { "name": "Current" },
+      "voltage": { "name": "Voltage" },
+      "duration": { "name": "Session duration" },
+      "firmware": { "name": "Firmware" },
+      "wifi": { "name": "Wi-Fi network" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "charging": { "name": "Charging" },
+      "fault": { "name": "Fault" }
+    },
+    "switch": {
+      "charge": { "name": "Charging" }
+    },
+    "number": {
+      "max_current": { "name": "Charging current" }
+    },
+    "select": {
+      "charge_mode": {
+        "name": "Charging mode",
+        "state": {
+          "authorized": "Via app or card",
+          "plug_and_charge": "Plug and charge",
+          "reservation": "Scheduled"
+        }
+      }
+    }
+  }
+}

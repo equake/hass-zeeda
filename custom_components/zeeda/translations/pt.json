@@ -1,0 +1,87 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Carregador Zeeda",
+        "description": "Entre com a conta do aplicativo ZEEDA (e-mail e senha). A integração localiza automaticamente o servidor regional correto para você.",
+        "data": {
+          "username": "E-mail",
+          "password": "Senha"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar Zeeda",
+        "description": "O login de {email} não é mais válido. Informe a senha novamente.",
+        "data": {
+          "password": "Senha"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "E-mail ou senha inválidos.",
+      "cannot_connect": "Não foi possível acessar os servidores da Zeeda.",
+      "unknown": "Erro inesperado."
+    },
+    "abort": {
+      "already_configured": "Esta conta já está configurada.",
+      "reauth_successful": "Reautenticação concluída."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções da Zeeda",
+        "data": {
+          "scan_interval": "Intervalo de atualização do status (reserva da conexão em tempo real)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "standby": "Em espera",
+          "connected": "Conectado",
+          "charging": "Carregando",
+          "waiting": "Aguardando recarga",
+          "finished": "Concluído",
+          "scheduled": "Agendado",
+          "fault": "Falha",
+          "online": "Online",
+          "offline": "Offline",
+          "unknown": "Desconhecido"
+        }
+      },
+      "power": { "name": "Potência de carga" },
+      "session_energy": { "name": "Energia da sessão" },
+      "current": { "name": "Corrente" },
+      "voltage": { "name": "Tensão" },
+      "duration": { "name": "Duração da sessão" },
+      "firmware": { "name": "Firmware" },
+      "wifi": { "name": "Rede Wi-Fi" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "charging": { "name": "Carregando" },
+      "fault": { "name": "Falha" }
+    },
+    "switch": {
+      "charge": { "name": "Carregamento" }
+    },
+    "number": {
+      "max_current": { "name": "Corrente de carga" }
+    },
+    "select": {
+      "charge_mode": {
+        "name": "Modo de carregamento",
+        "state": {
+          "authorized": "Via app ou cartão",
+          "plug_and_charge": "Conectar e carregar",
+          "reservation": "Agendar carregamento"
+        }
+      }
+    }
+  }
+}
