@@ -2,6 +2,11 @@
 
 # Zeeda EV Charger — Home Assistant integration
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=equake&repository=hass-zeeda&category=integration)
+
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Control and monitor a **Zeeda** Wi-Fi EV charger from Home Assistant, talking
 directly to the Zeeda cloud with your app account — no extra hardware, no local
 flashing, no cloud bridge.
@@ -81,9 +86,9 @@ python3 helpers/test_client.py --email you@example.com --password 'yourpass' -v
 The integration ships its icon under `custom_components/zeeda/brand/`
 (`icon.png` 256×256 and `icon@2x.png` 512×512, both RGBA). Home Assistant 2026.3+
 serves it via the Brands Proxy API (`GET /api/brands/integration/zeeda/icon.png`),
-so the Zeeda logo shows up in **Settings → Devices & Services**. On older cores
-the integration still works; only the logo is absent until it is submitted to the
-[home-assistant/brands](https://github.com/home-assistant/brands) repository.
+so the Zeeda logo shows up in **Settings → Devices & Services** without any
+submission to the [home-assistant/brands](https://github.com/home-assistant/brands)
+repository.
 
 ## Wi-Fi setup (get the charger online first)
 
