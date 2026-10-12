@@ -201,7 +201,9 @@ class ZeedaCoordinator:
         )
 
         # Server-side messages follow Home Assistant's language, like the app's.
-        self._language = hass.config.language or "en"
+        # The API is only known to work with bare ISO codes ("en"), so HA's
+        # BCP 47 tags ("pt-BR", "zh-Hans") are reduced to the language part.
+        self._language = (hass.config.language or "en").split("-")[0].lower() or "en"
         self._api = ZeedaApi(
             async_get_clientsession(hass),
             self._language,

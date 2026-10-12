@@ -304,3 +304,19 @@ async def test_refresh_stays_quiet_while_login_backs_off() -> None:
     # Still exactly one reauth trigger: the second attempt hit the backoff.
     coordinator.entry.async_start_reauth.assert_called_once_with(None)
     assert coordinator._auth_failures == 1
+
+
+@pytest.mark.parametrize(
+    ("ha_language", "expected"),
+    (("pt-BR", "pt"), ("en", "en"), ("zh-Hans", "zh"), (None, "en")),
+)
+async def test_api_language_is_the_bare_language_code(
+    hass, ha_language: str | None, expected: str
+) -> None:
+    hass.config.language = ha_language
+    entry = Mock()
+    entry.data = {"username": "user@example.com", "password": "secret"}
+    entry.options = {}
+    entry.entry_id = "entry"
+
+    assert ZeedaCoordinator(hass, entry)._language == expected
