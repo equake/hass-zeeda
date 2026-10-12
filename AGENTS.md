@@ -8,6 +8,16 @@ Read this file before making any changes.
 Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR with
 `gh pr create`.
 
+### PR description formatting
+
+- Write the PR description as Markdown in a file and pass it with
+  `gh pr create --body-file <path>` or `gh pr edit --body-file <path>`.
+- Do not pass multiline descriptions as quoted `--body` strings or encode line
+  breaks as `\n`; shell escaping can make those characters appear literally on
+  GitHub.
+- After creating or editing a PR, verify the rendered body with
+  `gh pr view <number> --json body`.
+
 ## Quick Reference
 
 | Item | Value |
