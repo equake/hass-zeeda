@@ -2,6 +2,10 @@
 
 # Zeeda EV Charger — Home Assistant integration
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=equake&repository=hass-zeeda&category=integration)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Control and monitor a **Zeeda** Wi-Fi EV charger from Home Assistant, talking
 directly to the Zeeda cloud with your app account — no extra hardware, no local
 flashing, no cloud bridge.
