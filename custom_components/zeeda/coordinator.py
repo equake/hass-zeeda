@@ -25,17 +25,27 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
-from .api import Session, ZeedaApi, ZeedaAuthError, ZeedaError
+from .api import (
+    Session,
+    ZeedaApi,
+    ZeedaAuthError,
+    ZeedaConnectionError,
+    ZeedaError,
+)
 from .const import (
     CONF_SCAN_INTERVAL,
     CONF_TIMEZONE,
     CURRENT_CHANGE_PAUSE,
     DEFAULT_CURRENT_OPTIONS,
     DEFAULT_SCAN_INTERVAL,
+    AUTH_BACKOFF_BASE,
+    AUTH_BACKOFF_MAX,
     DOMAIN,
     FULL_REFRESH_INTERVAL,
     STATUS_CHARGING,
     TOKEN_REFRESH_MARGIN,
+    WS_ACTION_OFFLINE,
+    WS_ACTION_ONLINE,
     WS_DEBOUNCE,
 )
 from .ws import ZeedaWebSocket
@@ -111,6 +121,8 @@ class ZeedaCoordinator:
         self._command_lock = asyncio.Lock()
         self._last_full: float = 0.0
         self._ws_debounce: asyncio.TimerHandle | None = None
+        self._auth_failures: int = 0
+        self._auth_cooldown_until: float = 0.0
 
         self.chargers: dict[str, Charger] = {}
         self.connected: bool = False
@@ -156,6 +168,23 @@ class ZeedaCoordinator:
         # The new token invalidates existing sockets (they were built with the old
         # one). Drop them so the next refresh/command reconnects with the fresh token.
         await self._close_websockets()
+
+    async def _attempt_login(self) -> None:
+        """Log in with exponential backoff so a wrong password never hammers the
+        login endpoint (5 consecutive failures lock the account — and the app —
+        for 5 minutes)."""
+        if time.monotonic() < self._auth_cooldown_until:
+            raise ZeedaConnectionError("login is backing off after a failed attempt")
+        try:
+            await self._login()
+        except (ConfigEntryAuthFailed, ZeedaError):
+            self._auth_failures += 1
+            self._auth_cooldown_until = time.monotonic() + min(
+                AUTH_BACKOFF_BASE * 2 ** (self._auth_failures - 1), AUTH_BACKOFF_MAX
+            )
+            raise
+        self._auth_failures = 0
+        self._auth_cooldown_until = 0.0
 
     @callback
     def _on_token_updated(self, token: str) -> None:
@@ -216,7 +245,7 @@ class ZeedaCoordinator:
                 >= self._token_expires_at - TOKEN_REFRESH_MARGIN
             ):
                 try:
-                    await self._login()
+                    await self._attempt_login()
                 except ZeedaError as err:
                     _LOGGER.debug("Proactive Zeeda token refresh failed: %s", err)
 
@@ -262,7 +291,10 @@ class ZeedaCoordinator:
             self.connected = False
             for charger in self.chargers.values():
                 charger.reachable = False
-            await self._login()
+            try:
+                await self._attempt_login()
+            except ZeedaConnectionError:
+                pass  # backing off after a failed login; don't hammer
         self._notify()
 
     async def _refresh_one(self, code: str, charger: Charger, *, full: bool) -> None:
@@ -358,6 +390,13 @@ class ZeedaCoordinator:
         payload = data.get("payload")
         if charger is not None:
             charger.reachable = True
+            # The device pushes its cloud connectivity as Online/Offline frames
+            # (connectorId 0, no meter payload) — apply directly for fast updates.
+            if action in (WS_ACTION_ONLINE, WS_ACTION_OFFLINE):
+                charger.online = action == WS_ACTION_ONLINE
+                self.connected = any(c.reachable for c in self.chargers.values())
+                self._notify()
+                return
         if charger is not None and isinstance(payload, dict):
             if self._apply_payload(charger, action, payload):
                 self.connected = any(c.reachable for c in self.chargers.values())

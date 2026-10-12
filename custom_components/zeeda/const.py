@@ -103,5 +103,15 @@ CURRENT_CHANGE_PAUSE = 6.0
 # Login token lifetime is 7 days (expireTime=604800); refresh well before that.
 TOKEN_REFRESH_MARGIN = 3600  # seconds before expiry to re-login
 
+# Backoff after a failed login. The account locks for 5 min after 5 consecutive
+# failed logins (and the lock is account-wide, so it would also hit the app), so
+# never hammer: back off exponentially instead of retrying every poll.
+AUTH_BACKOFF_BASE = 120  # seconds
+AUTH_BACKOFF_MAX = 1800  # seconds
+
+# WebSocket push actions that report the charger's cloud connectivity.
+WS_ACTION_ONLINE = "Online"
+WS_ACTION_OFFLINE = "Offline"
+
 WS_HEARTBEAT = 30  # seconds (matches the app)
 RECONNECT_DELAY = 30  # seconds
