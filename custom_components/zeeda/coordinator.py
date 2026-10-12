@@ -63,6 +63,19 @@ def _to_float(value: object) -> float | None:
         return None
 
 
+def _snap_current(options: tuple[str, ...], amps: int) -> int:
+    """Snap to the nearest selectable amperage.
+
+    ``MaxChargeCurrent`` only accepts the discrete values advertised by
+    ``currentList`` (e.g. 8/16/32 A), so any other requested value has to be
+    mapped to one the hardware will take. Ties snap down (safer for power).
+    """
+    values = sorted({int(x) for x in options if str(x).isdigit()})
+    if not values:
+        return amps
+    return min(values, key=lambda value: abs(value - amps))
+
+
 @dataclass
 class Charger:
     """Latest known state for one charge point."""
@@ -470,13 +483,16 @@ class ZeedaCoordinator:
         giving dynamic power control with the car plugged in.
         """
         charger = self.chargers[code]
+        snapped = _snap_current(charger.current_options, amps)
+        if snapped != amps:
+            _LOGGER.debug("Snapping %s A to selectable %s A for %s", amps, snapped, code)
         async with self._command_lock:
             ws = await self._get_ws(code)
             was_charging = charger.status == STATUS_CHARGING
             if was_charging:
                 await ws.stop_charge()
                 await asyncio.sleep(CURRENT_CHANGE_PAUSE)
-            await ws.set_max_current(amps)
+            await ws.set_max_current(snapped)
             if was_charging:
                 await asyncio.sleep(CURRENT_CHANGE_PAUSE)
                 await ws.start_charge()

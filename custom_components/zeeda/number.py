@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ZeedaConfigEntry
+from .const import DEFAULT_CURRENT_OPTIONS
 from .coordinator import ZeedaCoordinator
 from .entity import ZeedaEntity
 
@@ -43,8 +44,10 @@ class ZeedaCurrentNumber(ZeedaEntity, NumberEntity):
         super().__init__(coordinator, code)
         self._attr_unique_id = f"{code}_max_current"
         options = [int(x) for x in self._charger.current_options if str(x).isdigit()]
-        self._attr_native_min_value = float(min(options)) if options else 6.0
-        self._attr_native_max_value = float(max(options)) if options else 32.0
+        if not options:
+            options = [int(x) for x in DEFAULT_CURRENT_OPTIONS]
+        self._attr_native_min_value = float(min(options))
+        self._attr_native_max_value = float(max(options))
 
     @property
     def available(self) -> bool:
