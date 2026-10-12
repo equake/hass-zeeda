@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import zoneinfo
 from typing import Any
 
 import voluptuous as vol
@@ -14,11 +15,15 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .api import ZeedaApi, ZeedaAuthError, ZeedaError
@@ -35,21 +40,44 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _timezone_selector(default: str) -> SelectSelector:
+    """A searchable dropdown of all IANA time zones, defaulting to HA's own.
+
+    HA may run somewhere other than where the charger lives (e.g. in the cloud),
+    and the Zeeda backend is chosen by this time zone — so it must be settable.
+    """
+    zones = sorted(zoneinfo.available_timezones())
+    if default and default not in zones:
+        zones.insert(0, default)
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=zones,
+            mode=SelectSelectorMode.DROPDOWN,
+            custom_value=True,
+            sort=True,
+        )
+    )
+
+
+def _schema(hass: HomeAssistant, defaults: dict[str, Any] | None = None) -> vol.Schema:
     defaults = defaults or {}
+    tz_default = defaults.get(CONF_TIMEZONE) or str(hass.config.time_zone)
     return vol.Schema(
         {
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
             vol.Required(CONF_PASSWORD, default=""): str,
+            vol.Required(CONF_TIMEZONE, default=tz_default): _timezone_selector(
+                tz_default
+            ),
         }
     )
 
 
-async def _validate(hass, email: str, password: str, timezone: str) -> dict[str, Any]:
+async def _validate(hass, account: str, password: str, timezone: str) -> dict[str, Any]:
     api = ZeedaApi(async_get_clientsession(hass))
-    session = await api.login(email, password, timezone)
+    session = await api.login(account, password, timezone)
     return {
-        CONF_USERNAME: email,
+        CONF_USERNAME: account,
         CONF_PASSWORD: password,
         CONF_TIMEZONE: timezone,
         "user_id": session.user_id,
@@ -70,16 +98,16 @@ class ZeedaConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            email = user_input[CONF_USERNAME].strip()
+            account = user_input[CONF_USERNAME].strip()
             password = user_input[CONF_PASSWORD]
-            timezone = str(self.hass.config.time_zone)
+            timezone = user_input[CONF_TIMEZONE]
 
-            await self.async_set_unique_id(email.lower())
+            await self.async_set_unique_id(account.lower())
             self._abort_if_unique_id_configured()
 
             try:
                 data = await asyncio.wait_for(
-                    _validate(self.hass, email, password, timezone), timeout=30.0
+                    _validate(self.hass, account, password, timezone), timeout=30.0
                 )
             except ZeedaAuthError:
                 errors["base"] = "invalid_auth"
@@ -89,10 +117,10 @@ class ZeedaConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected error during Zeeda setup")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(title=email, data=data)
+                return self.async_create_entry(title=account, data=data)
 
         return self.async_show_form(
-            step_id="user", data_schema=_schema(), errors=errors
+            step_id="user", data_schema=_schema(self.hass, user_input), errors=errors
         )
 
     async def async_step_reauth(

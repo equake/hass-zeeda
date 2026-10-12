@@ -3,10 +3,15 @@
     "step": {
       "user": {
         "title": "Carregador Zeeda",
-        "description": "Entre com a conta do aplicativo ZEEDA (e-mail e senha). A integração localiza automaticamente o servidor regional correto para você.",
+        "description": "Entre com a conta do aplicativo ZEEDA.",
         "data": {
-          "username": "E-mail",
-          "password": "Senha"
+          "username": "E-mail ou telefone",
+          "password": "Senha",
+          "timezone": "Fuso horário"
+        },
+        "data_description": {
+          "username": "O login por e-mail é confirmado; por telefone é tentativa (melhor esforço).",
+          "timezone": "O servidor regional da Zeeda é escolhido por este fuso. Vem com o do Home Assistant, mas ajuste para a região da sua conta se o HA roda em outro lugar (ex.: na nuvem)."
         }
       },
       "reauth_confirm": {

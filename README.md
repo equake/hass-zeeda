@@ -59,7 +59,9 @@ See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the reverse-engineered API.
 1. HACS → ⋮ → *Custom repositories* → add this repo, category **Integration**.
 2. Install **Zeeda EV Charger**, restart Home Assistant.
 3. *Settings → Devices & services → Add integration → Zeeda*, enter your ZEEDA
-   app email and password.
+   app login (email — or phone, best-effort) and password. The **time zone**
+   defaults to Home Assistant's; change it to your account's region if HA runs
+   elsewhere (e.g. in the cloud), since it selects the Zeeda regional server.
 
 ### Manual
 

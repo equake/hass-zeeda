@@ -130,15 +130,22 @@ class ZeedaApi:
         return self.base_url
 
     # -- auth -----------------------------------------------------------------
-    async def login(self, email: str, password: str, timezone: str) -> Session:
-        """Resolve the server, then authenticate; returns a Session."""
+    async def login(self, account: str, password: str, timezone: str) -> Session:
+        """Resolve the server, then authenticate; returns a Session.
+
+        ``account`` may be an email or a phone number. The app only ships email
+        login (accountType "email"); phone ("phone") is best-effort — the server
+        decides, and a rejection surfaces as an auth error like any bad login.
+        """
         await self.resolve_server(timezone)
         self.token = None
+        account = account.strip()
+        account_type = "email" if "@" in account else "phone"
         data = await self._post(
             PATH_LOGIN,
             {
-                "account": email.strip(),
-                "accountType": "email",
+                "account": account,
+                "accountType": account_type,
                 "password": encrypt_password(password.strip()),
             },
         )

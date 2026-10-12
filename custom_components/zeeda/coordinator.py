@@ -77,7 +77,7 @@ class ZeedaCoordinator:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        self._email: str = entry.data[CONF_USERNAME]
+        self._account: str = entry.data[CONF_USERNAME]
         self._password: str = entry.data[CONF_PASSWORD]
         self._timezone: str = entry.data.get(CONF_TIMEZONE) or str(hass.config.time_zone)
         self._interval = timedelta(
@@ -126,7 +126,7 @@ class ZeedaCoordinator:
     async def _login(self) -> None:
         try:
             self._session = await self._api.login(
-                self._email, self._password, self._timezone
+                self._account, self._password, self._timezone
             )
         except ZeedaAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
@@ -160,7 +160,7 @@ class ZeedaCoordinator:
                 pass
             self.chargers[code] = charger
         if not self.chargers:
-            _LOGGER.warning("Zeeda account %s has no chargers", self._email)
+            _LOGGER.warning("Zeeda account %s has no chargers", self._account)
 
     # -- polling --------------------------------------------------------------
     async def _scheduled_refresh(self, _now) -> None:
