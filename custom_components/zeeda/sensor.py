@@ -65,6 +65,18 @@ _SENSORS: tuple[ZeedaSensorDescription, ...] = (
         value_fn=lambda c: c.session_energy_kwh,
     ),
     ZeedaSensorDescription(
+        key="total_energy",
+        translation_key="total_energy",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        # The meter reports a lifetime cumulative value; observed magnitude
+        # (~1.0e6 for ~1 MWh) is in watt-hours. Native Wh, displayed as kWh.
+        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+        suggested_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.total_energy,
+    ),
+    ZeedaSensorDescription(
         key="current",
         translation_key="current",
         device_class=SensorDeviceClass.CURRENT,

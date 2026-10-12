@@ -130,6 +130,11 @@ class ZeedaCoordinator:
             )
         except ZeedaAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
+        # The new token invalidates existing sockets (they were built with the old
+        # one). Drop them so the next refresh/command reconnects with the fresh token.
+        for ws in self._ws.values():
+            await ws.close()
+        self._ws.clear()
 
     async def _discover(self) -> None:
         assert self._session is not None
@@ -176,19 +181,25 @@ class ZeedaCoordinator:
         await self.async_refresh(full=full)
 
     async def async_refresh(self, *, full: bool = False) -> None:
+        any_ok = False
         try:
             for code, charger in self.chargers.items():
-                await self._refresh_one(code, charger, full=full)
-            self.connected = True
-            if full:
+                # Isolate per charger: one charger's transient error must not
+                # take the whole account offline.
+                try:
+                    await self._refresh_one(code, charger, full=full)
+                    any_ok = True
+                except ZeedaAuthError:
+                    raise  # token problem is account-wide -> handled below
+                except ZeedaError as err:
+                    _LOGGER.debug("Zeeda refresh failed for %s: %s", code, err)
+            self.connected = any_ok
+            if any_ok and full:
                 self._last_full = time.monotonic()
         except ZeedaAuthError:
             # token expired or revoked -> re-login once, then retry next tick
             self.connected = False
             await self._login()
-        except ZeedaError as err:
-            self.connected = False
-            _LOGGER.debug("Zeeda refresh failed: %s", err)
         self._notify()
 
     async def _refresh_one(self, code: str, charger: Charger, *, full: bool) -> None:

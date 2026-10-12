@@ -59,24 +59,51 @@
           "unknown": "Desconhecido"
         }
       },
-      "power": { "name": "Potência de carga" },
-      "session_energy": { "name": "Energia da sessão" },
-      "current": { "name": "Corrente" },
-      "voltage": { "name": "Tensão" },
-      "duration": { "name": "Duração da sessão" },
-      "firmware": { "name": "Firmware" },
-      "wifi": { "name": "Rede Wi-Fi" }
+      "power": {
+        "name": "Potência de carga"
+      },
+      "session_energy": {
+        "name": "Energia da sessão"
+      },
+      "total_energy": {
+        "name": "Energia total"
+      },
+      "current": {
+        "name": "Corrente"
+      },
+      "voltage": {
+        "name": "Tensão"
+      },
+      "duration": {
+        "name": "Duração da sessão"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "wifi": {
+        "name": "Rede Wi-Fi"
+      }
     },
     "binary_sensor": {
-      "online": { "name": "Online" },
-      "charging": { "name": "Carregando" },
-      "fault": { "name": "Falha" }
+      "online": {
+        "name": "Online"
+      },
+      "charging": {
+        "name": "Carregando"
+      },
+      "fault": {
+        "name": "Falha"
+      }
     },
     "switch": {
-      "charge": { "name": "Carregamento" }
+      "charge": {
+        "name": "Carregamento"
+      }
     },
     "number": {
-      "max_current": { "name": "Corrente de carga" }
+      "max_current": {
+        "name": "Corrente de carga"
+      }
     },
     "select": {
       "charge_mode": {
