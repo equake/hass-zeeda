@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.zeeda.const import WS_ACTION_OFFLINE, WS_ACTION_ONLINE
-from custom_components.zeeda.coordinator import Charger, ZeedaCoordinator
+from custom_components.zeeda.coordinator import Charger, ZeedaCoordinator, _snap_current
 
 
 def test_apply_meter_values_payload() -> None:
@@ -88,3 +88,21 @@ def test_online_offline_push_updates_connectivity_immediately(
     assert coordinator.connected is True
     coordinator._notify.assert_called_once_with()
     coordinator.hass.loop.call_later.assert_not_called()
+
+
+def test_snap_current_rounds_to_nearest_selectable_value() -> None:
+    options = ("8", "16", "32")
+
+    assert _snap_current(options, 13) == 16
+    assert _snap_current(options, 40) == 32
+    assert _snap_current(options, 2) == 8
+
+
+def test_snap_current_tie_snaps_down() -> None:
+    """12 A is equidistant from 8 and 16; the lower (safer) value wins."""
+    assert _snap_current(("8", "16", "32"), 12) == 8
+
+
+def test_snap_current_passthrough_without_selectable_values() -> None:
+    assert _snap_current((), 20) == 20
+    assert _snap_current(("auto",), 20) == 20

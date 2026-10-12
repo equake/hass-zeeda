@@ -60,7 +60,9 @@ Branch off `main` (`fix/...`, `feat/...`), commit there, push, and open a PR wit
   **The charger only accepts a current change while not actively charging.** So
   `ZeedaCoordinator.set_max_current` orchestrates stop → change → start when a
   session is live (`CURRENT_CHANGE_PAUSE` between steps). This is the dynamic
-  power-control feature.
+  power-control feature. Only the discrete values from `currentList` are
+  accepted, so requested amps are snapped to the nearest selectable value
+  (`_snap_current`; ties snap down).
 
 ## Coding Conventions
 
