@@ -194,6 +194,7 @@ def _runtime_auth_coordinator() -> tuple[ZeedaCoordinator, Charger]:
     coordinator.connected = True
     coordinator._auth_failures = 0
     coordinator._auth_cooldown_until = 0.0
+    coordinator._backoff_store = {}
     coordinator._reauth_warned = False
     coordinator._available = {}
     coordinator._offline_since = {}

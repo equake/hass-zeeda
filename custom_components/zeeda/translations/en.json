@@ -92,6 +92,7 @@
     }
   },
   "exceptions": {
+    "cloud_unreachable": { "message": "Could not reach the Zeeda cloud: {error}. Home Assistant will retry automatically." },
     "command_failed": { "message": "Could not send the command to the charger: {error}" },
     "command_rejected": { "message": "The charger rejected the command: {error}" },
     "invalid_charge_mode": { "message": "Unknown charging mode: {option}" },
