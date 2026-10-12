@@ -135,8 +135,10 @@ class ZeedaConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email = reauth_entry.data[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
-            timezone = reauth_entry.data.get(CONF_TIMEZONE) or str(
-                self.hass.config.time_zone
+            timezone = (
+                reauth_entry.options.get(CONF_TIMEZONE)
+                or reauth_entry.data.get(CONF_TIMEZONE)
+                or str(self.hass.config.time_zone)
             )
             try:
                 data = await asyncio.wait_for(
@@ -162,19 +164,51 @@ class ZeedaConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ZeedaOptionsFlow(OptionsFlow):
-    """Options: polling interval."""
+    """Options: polling interval and account time zone."""
+
+    def _current_timezone(self) -> str:
+        entry = self.config_entry
+        return (
+            entry.options.get(CONF_TIMEZONE)
+            or entry.data.get(CONF_TIMEZONE)
+            or str(self.hass.config.time_zone)
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL])},
-            )
+            timezone = user_input[CONF_TIMEZONE]
+            # The time zone picks the regional server, so only a change needs a
+            # login to prove the account lives there (logins are rate-limited).
+            if timezone != self._current_timezone():
+                try:
+                    await asyncio.wait_for(
+                        _validate(
+                            self.hass,
+                            self.config_entry.data[CONF_USERNAME],
+                            self.config_entry.data[CONF_PASSWORD],
+                            timezone,
+                        ),
+                        timeout=30.0,
+                    )
+                except ZeedaAuthError:
+                    errors["base"] = "invalid_auth"
+                except (ZeedaError, TimeoutError, OSError):
+                    errors["base"] = "cannot_connect"
+            if not errors:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
+                        CONF_TIMEZONE: timezone,
+                    },
+                )
         current = int(
             self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
+        timezone = self._current_timezone()
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -189,7 +223,11 @@ class ZeedaOptionsFlow(OptionsFlow):
                             unit_of_measurement="s",
                             mode=NumberSelectorMode.SLIDER,
                         )
-                    )
+                    ),
+                    vol.Optional(
+                        CONF_TIMEZONE, default=timezone
+                    ): _timezone_selector(timezone),
                 }
             ),
+            errors=errors,
         )

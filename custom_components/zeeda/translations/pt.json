@@ -37,7 +37,11 @@
       "init": {
         "title": "Opções da Zeeda",
         "data": {
-          "scan_interval": "Intervalo de atualização do status (reserva da conexão em tempo real)"
+          "scan_interval": "Intervalo de atualização do status (reserva da conexão em tempo real)",
+          "timezone": "Fuso horário"
+        },
+        "data_description": {
+          "timezone": "Define o servidor regional da Zeeda, então precisa corresponder à região da conta. Alterar isso refaz o login e recarrega a integração."
         }
       }
     }

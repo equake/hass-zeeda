@@ -37,7 +37,11 @@
       "init": {
         "title": "Zeeda options",
         "data": {
-          "scan_interval": "Status poll interval (fallback to the real-time connection)"
+          "scan_interval": "Status poll interval (fallback to the real-time connection)",
+          "timezone": "Time zone"
+        },
+        "data_description": {
+          "timezone": "Selects the Zeeda regional server, so it must match the account's region. Changing it re-authenticates and reloads the integration."
         }
       }
     }
