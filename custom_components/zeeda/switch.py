@@ -33,10 +33,6 @@ class ZeedaChargeSwitch(ZeedaEntity, SwitchEntity):
         self._attr_unique_id = f"{code}_charge"
 
     @property
-    def available(self) -> bool:
-        return self._charger.reachable and self._charger.online
-
-    @property
     def is_on(self) -> bool:
         # "On" while a session is active (charging or waiting/suspended), or
         # right after a start/stop until the charger confirms it.

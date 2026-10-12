@@ -75,12 +75,11 @@ def _schema(hass: HomeAssistant, defaults: dict[str, Any] | None = None) -> vol.
 
 async def _validate(hass, account: str, password: str, timezone: str) -> dict[str, Any]:
     api = ZeedaApi(async_get_clientsession(hass))
-    session = await api.login(account, password, timezone)
+    await api.login(account, password, timezone)
     return {
         CONF_USERNAME: account,
         CONF_PASSWORD: password,
         CONF_TIMEZONE: timezone,
-        "user_id": session.user_id,
     }
 
 

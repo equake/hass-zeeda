@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ZeedaConfigEntry
-from .const import STATUS_CHARGING
+from .const import STATUS_CHARGING, STATUS_FAULT
 from .coordinator import Charger, ZeedaCoordinator
 from .entity import ZeedaEntity
 
@@ -46,7 +46,7 @@ _BINARY_SENSORS: tuple[ZeedaBinaryDescription, ...] = (
         translation_key="fault",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda c: bool(c.error_code) or c.status == 8,
+        value_fn=lambda c: bool(c.error_code) or c.status == STATUS_FAULT,
     ),
 )
 

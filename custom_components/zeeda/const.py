@@ -74,6 +74,7 @@ CONNECTOR_STATUS = {
 }
 STATUS_CHARGING = 2
 STATUS_WAITING = {3, 4}
+STATUS_FAULT = 8
 # A session is "on" (the Charging switch) while charging or waiting/suspended.
 ACTIVE_STATUSES = frozenset({STATUS_CHARGING} | STATUS_WAITING)
 

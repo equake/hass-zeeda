@@ -50,10 +50,6 @@ class ZeedaCurrentNumber(ZeedaEntity, NumberEntity):
         self._attr_native_max_value = float(max(options))
 
     @property
-    def available(self) -> bool:
-        return self._charger.reachable and self._charger.online
-
-    @property
     def native_value(self) -> float | None:
         value = self._charger.effective_max_current
         return float(value) if value else None
